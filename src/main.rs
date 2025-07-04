@@ -25,11 +25,23 @@ fn main() {
         std::thread::sleep(std::time::Duration::from_millis(1000));
     }
 
-    let mut simulation = Simulation::new(config);
+    let mut simulation = Simulation::new(config.clone());
     let stats = simulation.run();
 
     println!("\n=== FINAL RESULTS ===");
     println!("{}", stats);
+    
+    // Debug information for D* Lite
+    if config.algorithm == "d_star_lite" && stats.total_moves == 0 {
+        println!("\nDEBUG: D* Lite returned 0 moves - this indicates the algorithm failed to find a path");
+        println!("This could be due to:");
+        println!("1. Algorithm initialization issues");
+        println!("2. Incorrect key calculations");
+        println!("3. Path extraction problems");
+        println!("Try running with A* to verify the grid has a valid path:");
+        println!("cargo run -- --algorithm a_star --grid-size {} --num-walls {}", 
+                 config.grid_size, config.num_walls);
+    }
     
     // Additional analysis
     if stats.total_moves > 0 {

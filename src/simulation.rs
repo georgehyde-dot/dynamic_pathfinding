@@ -39,8 +39,8 @@ impl Simulation {
             Box::new(DStarLite::new(grid.start, grid.goal))
         };
 
-        // Calculate optimal path BEFORE placing any obstacles
-        let optimal_path_length = Self::calculate_optimal_path_static(&grid);
+        // Calculate optimal path using A* (no obstacles, only walls)
+        let optimal_path_length = Self::calculate_optimal_path_with_astar(&grid);
         
         if optimal_path_length == 0 {
             panic!("No valid path exists from start to goal! Try reducing num_walls.");
@@ -80,6 +80,7 @@ impl Simulation {
             self.clear_screen();
             println!("=== PATHFINDING SIMULATION ===");
             println!("Step: 0 | Moves: 0 | Active obstacle groups: 0");
+            println!("Optimal path length (A*): {}", self.optimal_path_length);
             self.grid.print_grid(Some(self.agent.position));
             thread::sleep(Duration::from_millis(self.config.delay_ms));
         }
@@ -92,6 +93,9 @@ impl Simulation {
             self.agent.update_known_obstacles(&self.grid);
             self.agent.observe(&self.grid);
 
+            // Compute current optimal path using A* for comparison
+            let current_optimal_length = Self::calculate_optimal_path_with_astar(&self.grid);
+            
             let path = self.algorithm.find_path(
                 &self.grid,
                 self.agent.position,
@@ -113,6 +117,8 @@ impl Simulation {
                                  total_iterations + 1, stats.total_moves, self.active_obstacle_groups.len());
                         println!("Agent position: ({}, {})", self.agent.position.x, self.agent.position.y);
                         println!("Goal position: ({}, {})", self.grid.goal.x, self.grid.goal.y);
+                        println!("Original optimal path (A*): {}", self.optimal_path_length);
+                        println!("Current optimal path (A*): {}", current_optimal_length);
                         println!("Cycles until next obstacles: {}", 
                                  self.obstacle_cycle_interval - self.cycles_since_last_obstacle);
                         
@@ -140,9 +146,11 @@ impl Simulation {
                     self.clear_screen();
                     println!("=== PATHFINDING SIMULATION ===");
                     println!("WARNING: Agent got stuck at position {:?}", self.agent.position);
+                    println!("Current optimal path (A*): {}", current_optimal_length);
                     self.grid.print_grid(Some(self.agent.position));
                 } else {
                     println!("Warning: Agent got stuck at position {:?}", self.agent.position);
+                    println!("Current optimal path (A*): {}", current_optimal_length);
                 }
                 break;
             }
@@ -164,6 +172,12 @@ impl Simulation {
             }
             println!("Final position: ({}, {})", self.agent.position.x, self.agent.position.y);
             println!("Total steps: {} | Total moves: {}", total_iterations, stats.total_moves);
+            println!("Original optimal path (A*): {}", self.optimal_path_length);
+            
+            // Calculate final optimal path
+            let final_optimal_length = Self::calculate_optimal_path_with_astar(&self.grid);
+            println!("Final optimal path (A*): {}", final_optimal_length);
+            
             self.grid.print_grid(Some(self.agent.position));
         }
 
@@ -264,8 +278,8 @@ impl Simulation {
         print!("\x1B[2J\x1B[1;1H");
     }
 
-    /// Calculate optimal path length with perfect knowledge (no obstacles, only walls)
-    fn calculate_optimal_path_static(grid: &Grid) -> usize {
+    /// Calculate optimal path length using A* with current grid state
+    fn calculate_optimal_path_with_astar(grid: &Grid) -> usize {
         let mut a_star = AStar::new();
         if let Some(path) = a_star.find_path(grid, grid.start, grid.goal, &HashSet::new()) {
             path.len().saturating_sub(1)

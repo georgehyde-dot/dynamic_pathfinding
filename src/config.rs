@@ -1,8 +1,8 @@
 use clap::Parser;
 
-    #[derive(Parser, Debug)]
-    #[command(author, version, about, long_about = None)]
-    pub struct Config {
+#[derive(Parser, Debug, Clone)]
+#[command(author, version, about, long_about = None)]
+pub struct Config {
     #[arg(long, default_value_t = 20)]
     pub grid_size: usize,
 
