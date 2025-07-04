@@ -11,7 +11,7 @@ impl Agent {
     pub fn new(start_pos: Position) -> Self {
         Agent {
             position: start_pos,
-            field_of_view: 10,
+            field_of_view: 3, // Reasonable field of view
             known_obstacles: HashSet::new(),
         }
     }
@@ -28,5 +28,12 @@ impl Agent {
 
     pub fn move_to(&mut self, new_pos: Position) {
         self.position = new_pos;
+    }
+
+    /// Clear knowledge of obstacles that are no longer present
+    pub fn update_known_obstacles(&mut self, grid: &Grid) {
+        self.known_obstacles.retain(|pos| {
+            grid.cells[pos.x][pos.y] == Cell::Obstacle
+        });
     }
 }
