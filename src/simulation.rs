@@ -86,12 +86,14 @@ impl Simulation {
         let mut total_iterations = 0;
         let max_iterations = self.grid.size * self.grid.size * 2; // Prevent infinite loops
 
-        // Print initial grid
-        self.clear_screen();
-        println!("=== PATHFINDING SIMULATION ===");
-        println!("Step: 0 | Moves: 0 | Obstacles placed: 0");
-        self.grid.print_grid(Some(self.agent.position));
-        thread::sleep(Duration::from_millis(50));
+        // Print initial grid only if visualization is enabled
+        if !self.config.no_visualization {
+            self.clear_screen();
+            println!("=== PATHFINDING SIMULATION ===");
+            println!("Step: 0 | Moves: 0 | Obstacles placed: 0");
+            self.grid.print_grid(Some(self.agent.position));
+            thread::sleep(Duration::from_millis(self.config.delay_ms));
+        }
 
         while self.agent.position != self.grid.goal && total_iterations < max_iterations {
             // Place new obstacles
@@ -117,50 +119,57 @@ impl Simulation {
                     self.agent.move_to(next_pos);
                     stats.total_moves += 1;
                     
-                    // Clear screen and print updated grid
-                    self.clear_screen();
-                    println!("=== PATHFINDING SIMULATION ===");
-                    println!("Step: {} | Moves: {} | Obstacles placed: {}", 
-                             total_iterations + 1, stats.total_moves, obstacle_iter);
-                    println!("Agent position: ({}, {})", self.agent.position.x, self.agent.position.y);
-                    println!("Goal position: ({}, {})", self.grid.goal.x, self.grid.goal.y);
-                    
-                    // Show current path if available
-                    if path.len() > 2 {
-                        println!("Next few moves: {:?}", &path[1..path.len().min(4)]);
+                    // Only print and sleep if visualization is enabled
+                    if !self.config.no_visualization {
+                        self.clear_screen();
+                        println!("=== PATHFINDING SIMULATION ===");
+                        println!("Step: {} | Moves: {} | Obstacles placed: {}", 
+                                 total_iterations + 1, stats.total_moves, obstacle_iter);
+                        println!("Agent position: ({}, {})", self.agent.position.x, self.agent.position.y);
+                        println!("Goal position: ({}, {})", self.grid.goal.x, self.grid.goal.y);
+                        
+                        // Show current path if available
+                        if path.len() > 2 {
+                            println!("Next few moves: {:?}", &path[1..path.len().min(4)]);
+                        }
+                        
+                        self.grid.print_grid(Some(self.agent.position));
+                        thread::sleep(Duration::from_millis(self.config.delay_ms));
                     }
-                    
-                    self.grid.print_grid(Some(self.agent.position));
-                    
-                    // Sleep for 50ms
-                    thread::sleep(Duration::from_millis(50));
                 } else {
                     // Agent reached goal
                     break;
                 }
             } else {
                 // No path found - agent is stuck
-                self.clear_screen();
-                println!("=== PATHFINDING SIMULATION ===");
-                println!("WARNING: Agent got stuck at position {:?}", self.agent.position);
-                self.grid.print_grid(Some(self.agent.position));
+                if !self.config.no_visualization {
+                    self.clear_screen();
+                    println!("=== PATHFINDING SIMULATION ===");
+                    println!("WARNING: Agent got stuck at position {:?}", self.agent.position);
+                    self.grid.print_grid(Some(self.agent.position));
+                } else {
+                    // Still print warnings even without visualization
+                    println!("Warning: Agent got stuck at position {:?}", self.agent.position);
+                }
                 break;
             }
             
             total_iterations += 1;
         }
 
-        // Final state
-        self.clear_screen();
-        println!("=== SIMULATION COMPLETE ===");
-        if self.agent.position == self.grid.goal {
-            println!("SUCCESS: Agent reached the goal!");
-        } else {
-            println!("FAILED: Agent did not reach the goal");
+        // Final state - only print detailed info if visualization is enabled
+        if !self.config.no_visualization {
+            self.clear_screen();
+            println!("=== SIMULATION COMPLETE ===");
+            if self.agent.position == self.grid.goal {
+                println!("SUCCESS: Agent reached the goal!");
+            } else {
+                println!("FAILED: Agent did not reach the goal");
+            }
+            println!("Final position: ({}, {})", self.agent.position.x, self.agent.position.y);
+            println!("Total steps: {} | Total moves: {}", total_iterations, stats.total_moves);
+            self.grid.print_grid(Some(self.agent.position));
         }
-        println!("Final position: ({}, {})", self.agent.position.x, self.agent.position.y);
-        println!("Total steps: {} | Total moves: {}", total_iterations, stats.total_moves);
-        self.grid.print_grid(Some(self.agent.position));
 
         if total_iterations >= max_iterations {
             println!("Warning: Simulation terminated due to iteration limit");
@@ -170,7 +179,7 @@ impl Simulation {
         stats
     }
 
-    /// Clear the terminal screen
+    /// Clear the terminal screen (only used when visualization is enabled)
     fn clear_screen(&self) {
         // ANSI escape code to clear screen and move cursor to top-left
         print!("\x1B[2J\x1B[1;1H");

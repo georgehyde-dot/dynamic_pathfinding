@@ -20,8 +20,10 @@ fn main() {
     
     println!();
     
-    // Small delay before starting
-    std::thread::sleep(std::time::Duration::from_millis(1000));
+    // Small delay before starting (only if visualization is enabled)
+    if !config.no_visualization {
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+    }
 
     let mut simulation = Simulation::new(config);
     let stats = simulation.run();
