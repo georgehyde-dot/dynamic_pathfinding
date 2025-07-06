@@ -9,8 +9,7 @@ use crate::statistics::{Statistics, AlgorithmStats};
 use rand::{Rng, SeedableRng};
 use std::collections::HashSet;
 use std::thread;
-use std::time::Duration;
-
+use std::time::{Duration, Instant};
 #[derive(Debug, Clone)]
 pub struct ObstacleGroup {
     positions: HashSet<Position>,
@@ -131,6 +130,7 @@ pub struct AlgorithmResult {
     pub name: String,
     pub statistics: Statistics,
     pub algorithm_stats: AlgorithmStats,
+    pub timing_data: TimingData,
     pub success: bool,
     pub final_position: Position,
 }
@@ -254,7 +254,7 @@ impl Simulation {
 
 
             // Run the simulation
-            let (statistics, algorithm_stats) = simulation.run();
+            let (statistics, algorithm_stats, timing_data) = simulation.run();
             let success = simulation.agent.position == simulation.grid.goal;
             let final_position = simulation.agent.position;
 
@@ -262,6 +262,7 @@ impl Simulation {
                 name: algorithm_runner.name.clone(),
                 statistics,
                 algorithm_stats,
+                timing_data,
                 success,
                 final_position,
             });
@@ -305,8 +306,8 @@ impl Simulation {
         println!();
         
         // Print header
-        println!("{:<15} {:<8} {:<8} {:<8} {:<12} {:<15} {:<15} {:<20}", 
-                 "Algorithm", "Success", "Moves", "Optimal", "Efficiency", "Final Position", "Extra Moves", "Algorithm Usage");
+        println!("{:<15} {:<8} {:<8} {:<8} {:<12} {:<15} {:<15} {:<15} {:<15} {:<20}", 
+                 "Algorithm", "Success", "Moves", "Optimal", "Efficiency", "Avg Observe", "Avg Find Path", "Total Calls", "Final Position", "Algorithm Usage");
         println!("{}", "-".repeat(110));
 
         // Print results for each algorithm
@@ -324,14 +325,20 @@ impl Simulation {
                 }
             };
             
-            println!("{:<15} {:<8} {:<8} {:<8} {:<12} {:<15} {:<15} {:<20}", 
+            let avg_observe_str = format!("{:.2?}", result.timing_data.average_observe_time());
+            let avg_find_path_str = format!("{:.2?}", result.timing_data.average_find_path_time());
+            let total_calls_str = format!("{}", result.timing_data.total_calls());
+            
+            println!("{:<15} {:<8} {:<8} {:<8} {:<12} {:<15} {:<15} {:<15} {:<15} {:<20}", 
                      result.name,
                      success_str,
                      result.statistics.total_moves,
                      result.statistics.optimal_path_length,
                      efficiency_str,
+                     avg_observe_str,
+                     avg_find_path_str,
+                     total_calls_str,
                      final_pos_str,
-                     extra_moves,
                      usage_str);
         }
 
@@ -349,11 +356,13 @@ impl Simulation {
                     println!("{}: Total calls: {}", result.name, total_calls);
                     println!("  • A* usage: {} calls ({:.1}%)", a_star_calls, a_star_pct);
                     println!("  • D* Lite usage: {} calls ({:.1}%)", d_star_calls, d_star_pct);
+                    println!("  • Average observe time: {:.2?}", result.timing_data.average_observe_time());
+                    println!("  • Average find_path time: {:.2?}", result.timing_data.average_find_path_time());
                     
                     // Performance analysis
-                    if *a_star_calls == 1 && *d_star_calls > 0 {
-                        println!("  ✓ Optimal hybrid performance: A* used once for initial path, D* Lite handled all updates");
-                    } else if *a_star_calls > 1 {
+                    if *a_star_calls == 0 && *d_star_calls > 0 {
+                        println!("  ✓ Optimal hybrid performance: Only initial A* setup used, D* Lite handled all runtime updates");
+                    } else if *a_star_calls > 0 {
                         println!("  ⚠ Multiple A* calls: {} - indicates significant environment changes", a_star_calls);
                     } else if *d_star_calls == 0 {
                         println!("  ⚠ Only A* used - no incremental updates occurred");
@@ -373,7 +382,7 @@ impl Simulation {
         let successful_algorithms: Vec<_> = results.iter().filter(|r| r.success).collect();
         
         if !successful_algorithms.is_empty() {
-            println!("=== ANALYSIS ===");
+            println!("=== PERFORMANCE ANALYSIS ===");
             
             // Find best performing algorithm
             let best_moves = successful_algorithms.iter()
@@ -384,18 +393,18 @@ impl Simulation {
                 .min_by(|a, b| a.statistics.route_efficiency.partial_cmp(&b.statistics.route_efficiency).unwrap())
                 .unwrap();
 
+            let fastest_find_path = successful_algorithms.iter()
+                .min_by_key(|r| r.timing_data.average_find_path_time())
+                .unwrap();
+
+            let fastest_observe = successful_algorithms.iter()
+                .min_by_key(|r| r.timing_data.average_observe_time())
+                .unwrap();
+
             println!("Best by moves: {} ({} moves)", best_moves.name, best_moves.statistics.total_moves);
             println!("Best by efficiency: {} ({:.3} efficiency)", best_efficiency.name, best_efficiency.statistics.route_efficiency);
-            
-            // Print hybrid algorithm analysis
-            for result in results {
-                if let AlgorithmStats::Hybrid { a_star_calls, d_star_calls } = &result.algorithm_stats {
-                    let total_calls = a_star_calls + d_star_calls;
-                    let a_star_pct = (*a_star_calls as f64 / total_calls as f64) * 100.0;
-                    println!("Hybrid {}: {:.1}% A* ({} calls), {:.1}% D* ({} calls)", 
-                             result.name, a_star_pct, a_star_calls, 100.0 - a_star_pct, d_star_calls);
-                }
-            }
+            println!("Fastest find_path: {} ({:.2?} avg)", fastest_find_path.name, fastest_find_path.timing_data.average_find_path_time());
+            println!("Fastest observe: {} ({:.2?} avg)", fastest_observe.name, fastest_observe.timing_data.average_observe_time());
             
             // Compare performance
             if successful_algorithms.len() > 1 {
@@ -407,13 +416,27 @@ impl Simulation {
                 println!("Move count difference: {} moves ({:.1}% variation)", 
                          move_difference, 
                          (move_difference as f64 / min_moves as f64) * 100.0);
+
+                // Timing comparison
+                let find_path_times: Vec<_> = successful_algorithms.iter()
+                    .map(|r| r.timing_data.average_find_path_time())
+                    .collect();
+                let min_find_path_time = *find_path_times.iter().min().unwrap();
+                let max_find_path_time = *find_path_times.iter().max().unwrap();
+                
+                println!("Find_path time range: {:.2?} to {:.2?}", min_find_path_time, max_find_path_time);
+                
+                if max_find_path_time > min_find_path_time {
+                    let time_ratio = max_find_path_time.as_nanos() as f64 / min_find_path_time.as_nanos() as f64;
+                    println!("Slowest algorithm is {:.1}x slower than fastest", time_ratio);
+                }
             }
         } else {
             println!("No algorithms successfully reached the goal.");
         }
     }
 
-    pub fn run(&mut self) -> (Statistics, AlgorithmStats) {
+    pub fn run(&mut self) -> (Statistics, AlgorithmStats, TimingData) {
         let mut stats = Statistics::new(
             self.config.num_walls, 
             self.config.num_obstacles, 
@@ -425,6 +448,9 @@ impl Simulation {
         
         // Track algorithm calls
         let mut algorithm_calls = 0;
+        
+        // Track timing data
+        let mut timing_data = TimingData::new();
         
         // Track stuck attempts
         let mut stuck_attempts = 0;
@@ -444,15 +470,22 @@ impl Simulation {
             // Update obstacle lifecycle using pre-generated timeline
             self.update_obstacles_from_timeline();
             
-            // Update agent's knowledge of obstacles
+            // Time the observe call
+            let observe_start = Instant::now();
             self.agent.observe(&self.grid);
+            let observe_duration = observe_start.elapsed();
+            timing_data.observe_times.push(observe_duration);
             
+            // Time the find_path call
+            let find_path_start = Instant::now();
             let path = self.algorithm.find_path(
                 &self.grid,
                 self.agent.position,
                 self.grid.goal,
                 &self.agent.known_obstacles,
             );
+            let find_path_duration = find_path_start.elapsed();
+            timing_data.find_path_times.push(find_path_duration);
             
             // Track algorithm calls
             algorithm_calls += 1;
@@ -478,6 +511,10 @@ impl Simulation {
                         println!("Obstacle cycle: {} | Cycles until next: {}", 
                                  self.current_obstacle_cycle,
                                  self.environment.obstacle_cycle_interval - self.cycles_since_last_obstacle);
+                        
+                        // Show timing info if enabled
+                        println!("Last observe: {:.2?} | Last find_path: {:.2?}", 
+                                 observe_duration, find_path_duration);
                         
                         // Show obstacle group info
                         for (i, group) in self.active_obstacle_groups.iter().enumerate() {
@@ -512,6 +549,8 @@ impl Simulation {
                                  self.agent.position, stuck_attempts, MAX_STUCK_ATTEMPTS);
                         println!("Algorithm: {} | Step: {} | Moves: {} | Active obstacle groups: {}", 
                                  self.config.algorithm, total_iterations + 1, stats.total_moves, self.active_obstacle_groups.len());
+                        println!("Last observe: {:.2?} | Last find_path: {:.2?}", 
+                                 observe_duration, find_path_duration);
                         self.grid.print_grid(Some(self.agent.position));
                         thread::sleep(Duration::from_millis(self.config.delay_ms));
                     } else {
@@ -557,6 +596,10 @@ impl Simulation {
             println!("Total steps: {} | Total moves: {}", total_iterations, stats.total_moves);
             println!("Original optimal path (A*): {}", self.optimal_path_length);
             
+            // Show timing summary
+            println!("Average observe time: {:.2?}", timing_data.average_observe_time());
+            println!("Average find_path time: {:.2?}", timing_data.average_find_path_time());
+            
             // Calculate final optimal path
             let final_optimal_length = Self::calculate_optimal_path_with_astar(&self.grid);
             println!("Final optimal path (A*): {}", final_optimal_length);
@@ -577,7 +620,7 @@ impl Simulation {
             _ => AlgorithmStats::AStar(algorithm_calls), // fallback
         };
 
-        (stats, algorithm_stats)
+        (stats, algorithm_stats, timing_data)
     }
 
     /// Update obstacles using the pre-generated timeline
@@ -674,5 +717,43 @@ impl Simulation {
         } else {
             0
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TimingData {
+    pub observe_times: Vec<Duration>,
+    pub find_path_times: Vec<Duration>,
+}
+
+impl TimingData {
+    pub fn new() -> Self {
+        TimingData {
+            observe_times: Vec::new(),
+            find_path_times: Vec::new(),
+        }
+    }
+    
+    pub fn average_observe_time(&self) -> Duration {
+        if self.observe_times.is_empty() {
+            Duration::from_nanos(0)
+        } else {
+            let total: Duration = self.observe_times.iter().sum();
+            total / self.observe_times.len() as u32
+        }
+    }
+    
+    pub fn average_find_path_time(&self) -> Duration {
+        if self.find_path_times.is_empty() {
+            Duration::from_nanos(0)
+        } else {
+            let total: Duration = self.find_path_times.iter().sum();
+            total / self.find_path_times.len() as u32
+        }
+    }
+    
+    pub fn total_calls(&self) -> usize {
+        // Should be the same for both, but use find_path as it's the main operation
+        self.find_path_times.len()
     }
 }

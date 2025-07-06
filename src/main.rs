@@ -2,6 +2,7 @@ use clap::Parser;
 
 use dynamic_pathfinding::config::Config;
 use dynamic_pathfinding::simulation::Simulation;
+use std::time::Duration;
 
 fn main() {
     let config = Config::parse();
@@ -33,11 +34,32 @@ fn main() {
     } else {
         // Run single algorithm
         let mut simulation = Simulation::new(config.clone());
-        let (stats, algorithm_stats) = simulation.run();
+        let (stats, algorithm_stats, timing_data) = simulation.run();
 
         println!("\n=== FINAL RESULTS ===");
         println!("{}", stats);
         println!("{}", algorithm_stats);
+        
+        // Print timing information
+        println!("\n=== TIMING ANALYSIS ===");
+        println!("Total pathfinding calls: {}", timing_data.total_calls());
+        println!("Average observe time: {:.2?}", timing_data.average_observe_time());
+        println!("Average find_path time: {:.2?}", timing_data.average_find_path_time());
+        
+        if timing_data.total_calls() > 0 {
+            let total_observe_time: Duration = timing_data.observe_times.iter().sum();
+            let total_find_path_time: Duration = timing_data.find_path_times.iter().sum();
+            let total_algorithm_time = total_observe_time + total_find_path_time;
+            
+            println!("Total time in observe: {:.2?}", total_observe_time);
+            println!("Total time in find_path: {:.2?}", total_find_path_time);
+            println!("Total algorithm time: {:.2?}", total_algorithm_time);
+            
+            let observe_percentage = (total_observe_time.as_nanos() as f64 / total_algorithm_time.as_nanos() as f64) * 100.0;
+            let find_path_percentage = (total_find_path_time.as_nanos() as f64 / total_algorithm_time.as_nanos() as f64) * 100.0;
+            
+            println!("Time breakdown: {:.1}% observe, {:.1}% find_path", observe_percentage, find_path_percentage);
+        }
         
         // Debug information for D* Lite
         if config.algorithm == "d_star_lite" && stats.total_moves == 0 {
