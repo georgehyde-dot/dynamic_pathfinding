@@ -31,17 +31,17 @@ impl Ord for Key {
 
 /// Implements the D* Lite pathfinding algorithm based on the 2002 paper by S. Koenig and M. Likhachev.
 pub struct DStarLite {
-    g_scores: HashMap<Position, i32>,      // g(s) values
-    rhs_scores: HashMap<Position, i32>,    // rhs(s) values  
+    pub g_scores: HashMap<Position, i32>,      // Make public for hybrid access
+    pub rhs_scores: HashMap<Position, i32>,    // Make public for hybrid access
     queue: BinaryHeap<(Key, Position, u64)>, // Priority queue U with generation counter
     vertex_generations: HashMap<Position, u64>, // Track current generation for each vertex
     current_generation: u64,               // Current generation counter
     k_m: i32,                              // Key modifier
-    s_start: Position,                     // Current start position
-    s_goal: Position,                      // Goal position
+    pub s_start: Position,                     // Make public for hybrid access
+    pub s_goal: Position,                      // Goal position
     s_last: Position,                      // Last start position
     edge_costs: HashMap<(Position, Position), i32>, // c(u,v) edge costs
-    initialized: bool,                     // Track if algorithm has been initialized
+    pub initialized: bool,                     // Track if algorithm has been initialized
 }
 
 impl DStarLite {
@@ -279,7 +279,7 @@ impl DStarLite {
     }
 
     /// Update edge costs when obstacles change
-    fn update_edge_costs(&mut self, grid: &Grid, obstacles: &HashSet<Position>) {
+    pub fn update_edge_costs(&mut self, grid: &Grid, obstacles: &HashSet<Position>) {
         self.edge_costs.clear();
         
         for x in 0..grid.size {

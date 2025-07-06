@@ -12,7 +12,9 @@ pub struct Config {
     #[arg(long, default_value_t = 10)]
     pub num_obstacles: usize,
 
-    #[arg(long, default_value = "all")]
+    /// Pathfinding algorithm to use
+    #[arg(long, default_value = "a_star")]
+    #[arg(help = "Algorithm: 'a_star', 'd_star_lite', 'hybrid', or 'all'")]
     pub algorithm: String,
 
     #[arg(long, default_value_t = 50)]

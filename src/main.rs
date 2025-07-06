@@ -33,10 +33,11 @@ fn main() {
     } else {
         // Run single algorithm
         let mut simulation = Simulation::new(config.clone());
-        let stats = simulation.run();
+        let (stats, algorithm_stats) = simulation.run();
 
         println!("\n=== FINAL RESULTS ===");
         println!("{}", stats);
+        println!("{}", algorithm_stats);
         
         // Debug information for D* Lite
         if config.algorithm == "d_star_lite" && stats.total_moves == 0 {
@@ -45,8 +46,10 @@ fn main() {
             println!("1. Algorithm initialization issues");
             println!("2. Incorrect key calculations");
             println!("3. Path extraction problems");
-            println!("Try running with A* to verify the grid has a valid path:");
+            println!("Try running with A* or hybrid to verify the grid has a valid path:");
             println!("cargo run -- --algorithm a_star --grid-size {} --num-walls {}", 
+                     config.grid_size, config.num_walls);
+            println!("cargo run -- --algorithm hybrid --grid-size {} --num-walls {}", 
                      config.grid_size, config.num_walls);
         }
         

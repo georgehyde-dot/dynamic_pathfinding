@@ -2,9 +2,10 @@ use crate::agent::Agent;
 use crate::algorithms::a_star::AStar;
 use crate::algorithms::common::PathfindingAlgorithm;
 use crate::algorithms::d_star_lite::DStarLite;
+use crate::algorithms::hybrid_a_star_d_star::HybridAStarDStar;
 use crate::config::Config;
 use crate::grid::{Cell, Grid, Position};
-use crate::statistics::Statistics;
+use crate::statistics::{Statistics, AlgorithmStats};
 use rand::{Rng, SeedableRng};
 use std::collections::HashSet;
 use std::thread;
@@ -129,6 +130,7 @@ impl EnvironmentSetup {
 pub struct AlgorithmResult {
     pub name: String,
     pub statistics: Statistics,
+    pub algorithm_stats: AlgorithmStats,
     pub success: bool,
     pub final_position: Position,
 }
@@ -172,12 +174,11 @@ impl Simulation {
         let grid = environment.create_grid();
         let agent = Agent::new(grid.start);
 
-        let algorithm: Box<dyn PathfindingAlgorithm> = if config.algorithm == "a_star" {
-            Box::new(AStar::new())
-        } else if config.algorithm == "d_star_lite" {
-            Box::new(DStarLite::new(grid.start, grid.goal))
-        } else {
-            panic!("Select either 'a_star' or 'd_star_lite' for algorithm");
+        let algorithm: Box<dyn PathfindingAlgorithm> = match config.algorithm.as_str() {
+            "a_star" => Box::new(AStar::new()),
+            "d_star_lite" => Box::new(DStarLite::new(grid.start, grid.goal)),
+            "hybrid" => Box::new(HybridAStarDStar::new(grid.start, grid.goal)),
+            _ => panic!("Select 'a_star', 'd_star_lite', 'hybrid', or 'all' for algorithm"),
         };
 
         // Calculate optimal path using A* (no obstacles, only walls)
@@ -202,16 +203,21 @@ impl Simulation {
 
     /// Run all algorithms and compare results
     pub fn run_all_algorithms(config: Config) -> Vec<AlgorithmResult> {
-        // Generate a single environment setup to be used by all algorithms
-        let environment = EnvironmentSetup::generate(&config, Some(42)); // Fixed seed for reproducibility
+        // Generate a random seed for this run, but use it consistently across all algorithms
+        let run_seed = rand::random::<u64>();
+        let environment = EnvironmentSetup::generate(&config, Some(run_seed));
         
-        // Define available algorithms
-        let algorithms = [AlgorithmRunner::new("A*", |_start, _goal| Box::new(AStar::new())),
-            AlgorithmRunner::new("D* Lite", |start, goal| Box::new(DStarLite::new(start, goal)))];
+        // Define available algorithms - use names that match the simulation constructor
+        let algorithms = [
+            AlgorithmRunner::new("a_star", |_start, _goal| Box::new(AStar::new())),
+            AlgorithmRunner::new("d_star_lite", |start, goal| Box::new(DStarLite::new(start, goal))),
+            AlgorithmRunner::new("hybrid", |start, goal| Box::new(HybridAStarDStar::new(start, goal))),
+        ];
 
         let mut results = Vec::new();
 
         println!("Running comparison of {} algorithms...", algorithms.len());
+        println!("Environment seed: {} (for reproducibility)", run_seed);
         println!("Environment: Grid {}x{}, Walls: {}, Obstacles: {}", 
                  environment.grid_size, environment.grid_size, 
                  environment.walls.len(), config.num_obstacles);
@@ -248,13 +254,14 @@ impl Simulation {
 
 
             // Run the simulation
-            let statistics = simulation.run();
+            let (statistics, algorithm_stats) = simulation.run();
             let success = simulation.agent.position == simulation.grid.goal;
             let final_position = simulation.agent.position;
 
             results.push(AlgorithmResult {
                 name: algorithm_runner.name.clone(),
                 statistics,
+                algorithm_stats,
                 success,
                 final_position,
             });
@@ -298,9 +305,9 @@ impl Simulation {
         println!();
         
         // Print header
-        println!("{:<12} {:<8} {:<8} {:<8} {:<12} {:<15} {:<15}", 
-                 "Algorithm", "Success", "Moves", "Optimal", "Efficiency", "Final Position", "Extra Moves");
-        println!("{}", "-".repeat(85));
+        println!("{:<15} {:<8} {:<8} {:<8} {:<12} {:<15} {:<15} {:<20}", 
+                 "Algorithm", "Success", "Moves", "Optimal", "Efficiency", "Final Position", "Extra Moves", "Algorithm Usage");
+        println!("{}", "-".repeat(110));
 
         // Print results for each algorithm
         for result in results {
@@ -309,14 +316,55 @@ impl Simulation {
             let final_pos_str = format!("({},{})", result.final_position.x, result.final_position.y);
             let extra_moves = result.statistics.total_moves.saturating_sub(result.statistics.optimal_path_length);
             
-            println!("{:<12} {:<8} {:<8} {:<8} {:<12} {:<15} {:<15}", 
+            let usage_str = match &result.algorithm_stats {
+                AlgorithmStats::AStar(calls) => format!("{} calls", calls),
+                AlgorithmStats::DStarLite(calls) => format!("{} calls", calls),
+                AlgorithmStats::Hybrid { a_star_calls, d_star_calls } => {
+                    format!("A*:{} D*:{}", a_star_calls, d_star_calls)
+                }
+            };
+            
+            println!("{:<15} {:<8} {:<8} {:<8} {:<12} {:<15} {:<15} {:<20}", 
                      result.name,
                      success_str,
                      result.statistics.total_moves,
                      result.statistics.optimal_path_length,
                      efficiency_str,
                      final_pos_str,
-                     extra_moves);
+                     extra_moves,
+                     usage_str);
+        }
+
+        // Print detailed hybrid algorithm breakdown
+        println!();
+        println!("=== HYBRID ALGORITHM BREAKDOWN ===");
+        let mut found_hybrid = false;
+        for result in results {
+            if let AlgorithmStats::Hybrid { a_star_calls, d_star_calls } = &result.algorithm_stats {
+                found_hybrid = true;
+                let total_calls = a_star_calls + d_star_calls;
+                if total_calls > 0 {
+                    let a_star_pct = (*a_star_calls as f64 / total_calls as f64) * 100.0;
+                    let d_star_pct = (*d_star_calls as f64 / total_calls as f64) * 100.0;
+                    println!("{}: Total calls: {}", result.name, total_calls);
+                    println!("  • A* usage: {} calls ({:.1}%)", a_star_calls, a_star_pct);
+                    println!("  • D* Lite usage: {} calls ({:.1}%)", d_star_calls, d_star_pct);
+                    
+                    // Performance analysis
+                    if *a_star_calls == 1 && *d_star_calls > 0 {
+                        println!("  ✓ Optimal hybrid performance: A* used once for initial path, D* Lite handled all updates");
+                    } else if *a_star_calls > 1 {
+                        println!("  ⚠ Multiple A* calls: {} - indicates significant environment changes", a_star_calls);
+                    } else if *d_star_calls == 0 {
+                        println!("  ⚠ Only A* used - no incremental updates occurred");
+                    }
+                    println!();
+                }
+            }
+        }
+        
+        if !found_hybrid {
+            println!("No hybrid algorithms were run in this comparison.");
         }
 
         println!();
@@ -339,6 +387,16 @@ impl Simulation {
             println!("Best by moves: {} ({} moves)", best_moves.name, best_moves.statistics.total_moves);
             println!("Best by efficiency: {} ({:.3} efficiency)", best_efficiency.name, best_efficiency.statistics.route_efficiency);
             
+            // Print hybrid algorithm analysis
+            for result in results {
+                if let AlgorithmStats::Hybrid { a_star_calls, d_star_calls } = &result.algorithm_stats {
+                    let total_calls = a_star_calls + d_star_calls;
+                    let a_star_pct = (*a_star_calls as f64 / total_calls as f64) * 100.0;
+                    println!("Hybrid {}: {:.1}% A* ({} calls), {:.1}% D* ({} calls)", 
+                             result.name, a_star_pct, a_star_calls, 100.0 - a_star_pct, d_star_calls);
+                }
+            }
+            
             // Compare performance
             if successful_algorithms.len() > 1 {
                 let move_counts: Vec<_> = successful_algorithms.iter().map(|r| r.statistics.total_moves).collect();
@@ -355,7 +413,7 @@ impl Simulation {
         }
     }
 
-    pub fn run(&mut self) -> Statistics {
+    pub fn run(&mut self) -> (Statistics, AlgorithmStats) {
         let mut stats = Statistics::new(
             self.config.num_walls, 
             self.config.num_obstacles, 
@@ -364,6 +422,13 @@ impl Simulation {
 
         let mut total_iterations = 0;
         let max_iterations = self.grid.size * self.grid.size * 4;
+        
+        // Track algorithm calls
+        let mut algorithm_calls = 0;
+        
+        // Track stuck attempts
+        let mut stuck_attempts = 0;
+        const MAX_STUCK_ATTEMPTS: usize = 5;
         
         // Print initial grid only if visualization is enabled
         if !self.config.no_visualization {
@@ -388,8 +453,14 @@ impl Simulation {
                 self.grid.goal,
                 &self.agent.known_obstacles,
             );
+            
+            // Track algorithm calls
+            algorithm_calls += 1;
 
             if let Some(path) = path {
+                // Reset stuck counter when path is found
+                stuck_attempts = 0;
+                
                 if path.len() > 1 {
                     let next_pos = path[1];
                     self.agent.move_to(next_pos);
@@ -428,15 +499,39 @@ impl Simulation {
                 }
             } else {
                 // No path found - agent is stuck
-                if !self.config.no_visualization {
-                    self.clear_screen();
-                    println!("=== PATHFINDING SIMULATION ===");
-                    println!("WARNING: Agent got stuck at position {:?}", self.agent.position);
-                    self.grid.print_grid(Some(self.agent.position));
+                stuck_attempts += 1;
+                
+                if stuck_attempts <= MAX_STUCK_ATTEMPTS {
+                    // Wait and try again next turn
+                    stats.total_moves += 1; // Count waiting as a move
+                    
+                    if !self.config.no_visualization {
+                        self.clear_screen();
+                        println!("=== PATHFINDING SIMULATION ===");
+                        println!("Agent stuck at position {:?} - waiting... (attempt {}/{})", 
+                                 self.agent.position, stuck_attempts, MAX_STUCK_ATTEMPTS);
+                        println!("Algorithm: {} | Step: {} | Moves: {} | Active obstacle groups: {}", 
+                                 self.config.algorithm, total_iterations + 1, stats.total_moves, self.active_obstacle_groups.len());
+                        self.grid.print_grid(Some(self.agent.position));
+                        thread::sleep(Duration::from_millis(self.config.delay_ms));
+                    } else {
+                        println!("Agent stuck at position {:?} - waiting... (attempt {}/{})", 
+                                 self.agent.position, stuck_attempts, MAX_STUCK_ATTEMPTS);
+                    }
                 } else {
-                    println!("Warning: Agent got stuck at position {:?}", self.agent.position);
+                    // Truly stuck after max attempts
+                    if !self.config.no_visualization {
+                        self.clear_screen();
+                        println!("=== PATHFINDING SIMULATION ===");
+                        println!("FAILURE: Agent permanently stuck at position {:?} after {} attempts", 
+                                 self.agent.position, MAX_STUCK_ATTEMPTS);
+                        self.grid.print_grid(Some(self.agent.position));
+                    } else {
+                        println!("Agent permanently stuck at position {:?} after {} attempts", 
+                                 self.agent.position, MAX_STUCK_ATTEMPTS);
+                    }
+                    break;
                 }
-                break;
             }
             
             total_iterations += 1;
@@ -469,10 +564,20 @@ impl Simulation {
             self.grid.print_grid(Some(self.agent.position));
         }
 
-
-
         stats.calculate_efficiency();
-        stats
+        
+        // Create appropriate algorithm stats based on algorithm type
+        let algorithm_stats = match self.config.algorithm.as_str() {
+            "a_star" => AlgorithmStats::AStar(algorithm_calls),
+            "d_star_lite" => AlgorithmStats::DStarLite(algorithm_calls),
+            "hybrid" => {
+                let (a_star_calls, d_star_calls) = self.algorithm.get_usage_stats();
+                AlgorithmStats::Hybrid { a_star_calls, d_star_calls }
+            },
+            _ => AlgorithmStats::AStar(algorithm_calls), // fallback
+        };
+
+        (stats, algorithm_stats)
     }
 
     /// Update obstacles using the pre-generated timeline

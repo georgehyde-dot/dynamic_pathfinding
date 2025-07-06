@@ -9,4 +9,9 @@ pub trait PathfindingAlgorithm {
         goal: Position,
         obstacles: &HashSet<Position>,
     ) -> Option<Vec<Position>>;
+    
+    /// Get algorithm usage statistics (for hybrid algorithms)
+    fn get_usage_stats(&self) -> (usize, usize) {
+        (0, 0)  // Default: no breakdown available
+    }
 }

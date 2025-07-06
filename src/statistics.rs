@@ -9,6 +9,67 @@ pub struct Statistics {
     pub optimal_path_length: usize,
 }
 
+#[derive(Debug, Clone)]
+pub enum AlgorithmStats {
+    AStar(usize),
+    DStarLite(usize),
+    Hybrid { a_star_calls: usize, d_star_calls: usize },
+}
+
+impl AlgorithmStats {
+    pub fn total_calls(&self) -> usize {
+        match self {
+            AlgorithmStats::AStar(calls) => *calls,
+            AlgorithmStats::DStarLite(calls) => *calls,
+            AlgorithmStats::Hybrid { a_star_calls, d_star_calls } => a_star_calls + d_star_calls,
+        }
+    }
+}
+
+impl fmt::Display for AlgorithmStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AlgorithmStats::AStar(calls) => {
+                writeln!(f, "A* Algorithm Statistics:")?;
+                writeln!(f, "Total pathfinding calls: {}", calls)?;
+            }
+            AlgorithmStats::DStarLite(calls) => {
+                writeln!(f, "D* Lite Algorithm Statistics:")?;
+                writeln!(f, "Total pathfinding calls: {}", calls)?;
+            }
+            AlgorithmStats::Hybrid { a_star_calls, d_star_calls } => {
+                let total = a_star_calls + d_star_calls;
+                let a_star_percentage = if total > 0 {
+                    (*a_star_calls as f64 / total as f64) * 100.0
+                } else {
+                    0.0
+                };
+                let d_star_percentage = if total > 0 {
+                    (*d_star_calls as f64 / total as f64) * 100.0
+                } else {
+                    0.0
+                };
+
+                writeln!(f, "Hybrid A*/D* Algorithm Statistics:")?;
+                writeln!(f, "Total pathfinding calls: {}", total)?;
+                writeln!(f, "A* usage: {} calls ({:.1}%)", a_star_calls, a_star_percentage)?;
+                writeln!(f, "D* Lite usage: {} calls ({:.1}%)", d_star_calls, d_star_percentage)?;
+                
+                if total > 0 {
+                    if *a_star_calls == 1 && *d_star_calls > 0 {
+                        writeln!(f, "✓ Optimal hybrid performance: A* used once for initial path, D* Lite handled all updates")?;
+                    } else if *a_star_calls > 1 {
+                        writeln!(f, "⚠ Multiple A* calls detected - may indicate significant environment changes")?;
+                    } else if *d_star_calls == 0 {
+                        writeln!(f, "⚠ Only A* was used - no incremental updates occurred")?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Statistics {
     pub fn new(num_walls: usize, num_obstacles: usize, optimal_path_length: usize) -> Self {
         Statistics {
@@ -22,10 +83,7 @@ impl Statistics {
 
     pub fn calculate_efficiency(&mut self) {
         if self.total_moves > 0 && self.optimal_path_length > 0 {
-            // Efficiency = optimal_length / actual_moves
-            // Values closer to 1.0 are better, values < 1.0 mean we did better than optimal (shouldn't happen)
-            // Values > 1.0 mean we took more moves than optimal
-            self.route_efficiency = self.total_moves as f64 / self.optimal_path_length as f64 ;
+            self.route_efficiency = self.total_moves as f64 / self.optimal_path_length as f64;
         } else {
             self.route_efficiency = 0.0;
         }
