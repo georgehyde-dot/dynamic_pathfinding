@@ -1,5 +1,6 @@
 use std::fmt;
 
+#[derive(Debug, Clone)]
 pub struct Statistics {
     pub total_moves: usize,
     pub num_obstacles: usize,

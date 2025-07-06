@@ -12,7 +12,7 @@ pub struct Config {
     #[arg(long, default_value_t = 10)]
     pub num_obstacles: usize,
 
-    #[arg(long, default_value = "a_star")]
+    #[arg(long, default_value = "all")]
     pub algorithm: String,
 
     #[arg(long, default_value_t = 50)]

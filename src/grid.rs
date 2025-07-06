@@ -14,6 +14,7 @@ pub enum Cell {
     Obstacle,
 }
 
+#[derive(Clone)]
 pub struct Grid {
     pub size: usize,
     pub cells: Vec<Vec<Cell>>,

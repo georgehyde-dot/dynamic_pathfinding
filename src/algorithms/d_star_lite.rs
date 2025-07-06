@@ -1,7 +1,7 @@
 use crate::algorithms::common::PathfindingAlgorithm;
-use crate::grid::{Grid, Position};
-use std::collections::{HashMap, HashSet, BinaryHeap};
+use crate::grid::{Grid, Position, Cell};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 /// Represents the priority key for a node in the D* Lite priority queue.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -20,372 +20,313 @@ impl PartialOrd for Key {
 
 impl Ord for Key {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Reversed comparison to make BinaryHeap a min-heap
-        other.k1.cmp(&self.k1).then_with(|| other.k2.cmp(&self.k2))
+        // For min-heap behavior with BinaryHeap (which is max-heap)
+        // We reverse the comparison
+        match other.k1.cmp(&self.k1) {
+            Ordering::Equal => other.k2.cmp(&self.k2),
+            other => other,
+        }
     }
 }
 
-/// Implements the D* Lite pathfinding algorithm.
+/// Implements the D* Lite pathfinding algorithm based on the 2002 paper by S. Koenig and M. Likhachev.
 pub struct DStarLite {
-    /// g(n): The actual cost incurred to reach node n
-    g_scores: HashMap<Position, i32>,
-    /// rhs(n): A one-step lookahead estimate of the cost to reach node n
-    rhs_scores: HashMap<Position, i32>,
-    /// Priority queue for processing nodes
-    queue: BinaryHeap<(Key, Position)>,
-    /// Key modifier for handling path cost changes
-    k_m: i32,
-    /// Current start position (changes as agent moves)
-    start: Position,
-    /// Goal position (fixed)
-    goal: Position,
-    /// Last known start position for k_m calculation
-    last_start: Position,
-    /// Track if initial computation is done
-    initial_computation_done: bool,
+    g_scores: HashMap<Position, i32>,      // g(s) values
+    rhs_scores: HashMap<Position, i32>,    // rhs(s) values  
+    queue: BinaryHeap<(Key, Position, u64)>, // Priority queue U with generation counter
+    vertex_generations: HashMap<Position, u64>, // Track current generation for each vertex
+    current_generation: u64,               // Current generation counter
+    k_m: i32,                              // Key modifier
+    s_start: Position,                     // Current start position
+    s_goal: Position,                      // Goal position
+    s_last: Position,                      // Last start position
+    edge_costs: HashMap<(Position, Position), i32>, // c(u,v) edge costs
+    initialized: bool,                     // Track if algorithm has been initialized
 }
 
 impl DStarLite {
     /// Creates a new instance of the D* Lite algorithm.
+    /// Corresponds to the `Initialize()` procedure in the paper.
     pub fn new(start: Position, goal: Position) -> Self {
         DStarLite {
             g_scores: HashMap::new(),
             rhs_scores: HashMap::new(),
             queue: BinaryHeap::new(),
+            vertex_generations: HashMap::new(),
+            current_generation: 0,
             k_m: 0,
-            start,
-            goal,
-            last_start: start,
-            initial_computation_done: false,
+            s_start: start,
+            s_goal: goal,
+            s_last: start,
+            edge_costs: HashMap::new(),
+            initialized: false,
         }
     }
+    
 
-    /// Initialize the algorithm
-    fn initialize(&mut self) {
-        if !self.initial_computation_done {
-            println!("DEBUG: D* Lite initializing - Goal: {:?}, Start: {:?}", self.goal, self.start);
-            // Initialize goal with rhs = 0 and add to queue
-            self.rhs_scores.insert(self.goal, 0);
-            self.queue.push((self.calculate_key(self.goal), self.goal));
-            self.initial_computation_done = true;
-            println!("DEBUG: D* Lite initialized - Queue size: {}, Goal rhs: 0", self.queue.len());
-        } else {
-            println!("DEBUG: D* Lite already initialized - Queue size: {}", self.queue.len());
-        }
-    }
-
-    /// Calculates the heuristic value (Manhattan distance) from a position to the start.
-    fn heuristic(&self, pos: Position) -> i32 {
-        (pos.x as i32 - self.start.x as i32).abs() + (pos.y as i32 - self.start.y as i32).abs()
-    }
-
-    /// Calculates the key for a given position for the priority queue.
-    fn calculate_key(&self, pos: Position) -> Key {
-        let g = *self.g_scores.get(&pos).unwrap_or(&i32::MAX);
-        let rhs = *self.rhs_scores.get(&pos).unwrap_or(&i32::MAX);
-        let min_score = g.min(rhs);
-
-        if min_score == i32::MAX {
+    /// procedure CalculateKey(s) - line 01'
+    fn calculate_key(&self, s: Position) -> Key {
+        let g_s = *self.g_scores.get(&s).unwrap_or(&i32::MAX);
+        let rhs_s = *self.rhs_scores.get(&s).unwrap_or(&i32::MAX);
+        let min_val = g_s.min(rhs_s);
+        
+        if min_val == i32::MAX {
             Key { k1: i32::MAX, k2: i32::MAX }
         } else {
             Key {
-                k1: min_score.saturating_add(self.heuristic(pos)).saturating_add(self.k_m),
-                k2: min_score,
+                k1: min_val.saturating_add(self.h(s, self.s_start)).saturating_add(self.k_m),
+                k2: min_val,
             }
         }
     }
 
-    /// Get the cost of moving from one position to another
-    fn get_edge_cost(&self, _from: Position, to: Position, grid: &Grid, obstacles: &HashSet<Position>) -> i32 {
+    /// Heuristic function h(s1, s2) - Manhattan distance
+    fn h(&self, s1: Position, s2: Position) -> i32 {
+        (s1.x as i32 - s2.x as i32).abs() + (s1.y as i32 - s2.y as i32).abs()
+    }
+
+    /// Get edge cost c(u, v)
+    fn c(&self, u: Position, v: Position, grid: &Grid, obstacles: &HashSet<Position>) -> i32 {
+        // Check if edge exists in our stored costs first
+        if let Some(&cost) = self.edge_costs.get(&(u, v)) {
+            return cost;
+        }
+
         // Check bounds
-        if to.x >= grid.size || to.y >= grid.size {
+        if v.x >= grid.size || v.y >= grid.size {
             return i32::MAX;
         }
-        
-        // Check if the destination is blocked
-        if obstacles.contains(&to) || grid.cells[to.x][to.y] == crate::grid::Cell::Wall {
+
+        // Check if destination is blocked
+        if obstacles.contains(&v) || grid.cells[v.x][v.y] == Cell::Wall {
             i32::MAX
         } else {
             1 // Standard movement cost
         }
     }
 
-    /// Updates a vertex's rhs-value and its position in the priority queue.
-    fn update_vertex(&mut self, pos: Position, grid: &Grid, obstacles: &HashSet<Position>) {
-        // Update rhs value for non-goal nodes
-        if pos != self.goal {
+    /// Get successors of position s
+    fn succ(&self, s: Position, grid: &Grid) -> Vec<Position> {
+        grid.get_neighbors(&s)
+    }
+
+    /// Get predecessors of position s  
+    fn pred(&self, s: Position, grid: &Grid) -> Vec<Position> {
+        grid.get_neighbors(&s) // In grid world, predecessors = successors
+    }
+
+    /// procedure Initialize() - lines 02'-06'
+    fn initialize(&mut self) {
+        // Clear all data structures
+        self.queue.clear();
+        self.vertex_generations.clear();
+        self.current_generation = 0;
+        self.k_m = 0;
+        self.g_scores.clear();
+        self.rhs_scores.clear();
+        
+        // line 05': rhs(s_goal) = 0
+        self.rhs_scores.insert(self.s_goal, 0);
+        
+        // line 06': U.Insert(s_goal, CalculateKey(s_goal))
+        let key = self.calculate_key(self.s_goal);
+        self.current_generation += 1;
+        self.vertex_generations.insert(self.s_goal, self.current_generation);
+        self.queue.push((key, self.s_goal, self.current_generation));
+        
+        self.initialized = true;
+    }
+
+    /// procedure UpdateVertex(u) - lines 07'-09' with lazy deletion
+    fn update_vertex(&mut self, u: Position, grid: &Grid, obstacles: &HashSet<Position>) {
+        let g_u = *self.g_scores.get(&u).unwrap_or(&i32::MAX);
+        
+        // Calculate new rhs(u) if u != s_goal
+        if u != self.s_goal {
             let mut min_rhs = i32::MAX;
+            let successors = self.succ(u, grid);
             
-            // Check all predecessors (neighbors that can reach this position)
-            for pred in grid.get_neighbors(&pos) {
-                let g_pred = *self.g_scores.get(&pred).unwrap_or(&i32::MAX);
-                let edge_cost = self.get_edge_cost(pred, pos, grid, obstacles);
+            for s_prime in successors {
+                let cost = self.c(u, s_prime, grid, obstacles);
+                let g_s_prime = *self.g_scores.get(&s_prime).unwrap_or(&i32::MAX);
                 
-                if g_pred != i32::MAX && edge_cost != i32::MAX {
-                    let total_cost = g_pred.saturating_add(edge_cost);
+                if cost != i32::MAX && g_s_prime != i32::MAX {
+                    let total_cost = cost.saturating_add(g_s_prime);
                     min_rhs = min_rhs.min(total_cost);
                 }
             }
-            self.rhs_scores.insert(pos, min_rhs);
+            
+            self.rhs_scores.insert(u, min_rhs);
         }
-
-        // Remove any existing entry for this position from the queue
-        self.queue.retain(|(_, p)| *p != pos);
-
-        // Add to the queue if the node is inconsistent (g != rhs)
-        let g_val = *self.g_scores.get(&pos).unwrap_or(&i32::MAX);
-        let rhs_val = *self.rhs_scores.get(&pos).unwrap_or(&i32::MAX);
         
-        if g_val != rhs_val {
-            self.queue.push((self.calculate_key(pos), pos));
+        let rhs_u = *self.rhs_scores.get(&u).unwrap_or(&i32::MAX);
+        
+        // Invalidate old entries by incrementing generation
+        self.current_generation += 1;
+        self.vertex_generations.insert(u, self.current_generation);
+        
+        // Insert u if it's inconsistent
+        if g_u != rhs_u {
+            let key = self.calculate_key(u);
+            self.queue.push((key, u, self.current_generation));
         }
     }
 
-    /// Check if the start node has been properly processed (has a finite g-value)
-    fn start_is_processed(&self) -> bool {
-        let start_g = *self.g_scores.get(&self.start).unwrap_or(&i32::MAX);
-        start_g != i32::MAX
-    }
-
-    /// Check if start is truly consistent (g == rhs and both are finite)
-    fn start_is_consistent(&self) -> bool {
-        let start_g = *self.g_scores.get(&self.start).unwrap_or(&i32::MAX);
-        let start_rhs = *self.rhs_scores.get(&self.start).unwrap_or(&i32::MAX);
-        
-        // Only consider it consistent if both values are finite and equal
-        start_g != i32::MAX && start_rhs != i32::MAX && start_g == start_rhs
-    }
-
-    /// Main computation loop to process the priority queue
+    /// procedure ComputeShortestPath() - lines 10'-20' with lazy deletion
     fn compute_shortest_path(&mut self, grid: &Grid, obstacles: &HashSet<Position>) {
-        println!("DEBUG: Starting compute_shortest_path - Queue size: {}", self.queue.len());
-        
-        let mut iterations = 0;
-        let max_iterations = grid.size * grid.size * 4;
-
-        while !self.queue.is_empty() && iterations < max_iterations {
-            let start_key = self.calculate_key(self.start);
-            let start_g = *self.g_scores.get(&self.start).unwrap_or(&i32::MAX);
-            let start_rhs = *self.rhs_scores.get(&self.start).unwrap_or(&i32::MAX);
-            
-            if let Some((top_key, top_pos)) = self.queue.peek() {
-                if iterations < 5 || iterations % 10 == 0 {  // Reduce debug spam
-                    println!("DEBUG: Iteration {}: Top key: {:?} (pos: {:?}), Start key: {:?}, Start g: {}, Start rhs: {}", 
-                             iterations, top_key, top_pos, start_key, start_g, start_rhs);
+        while !self.queue.is_empty() {
+            // Skip invalid entries using lazy deletion
+            let (k_old, u) = loop {
+                if let Some((k, pos, gen)) = self.queue.pop() {
+                    // Check if this entry is still valid
+                    if *self.vertex_generations.get(&pos).unwrap_or(&0) == gen {
+                        break (k, pos);
+                    }
+                    // Skip this entry - it's been invalidated
+                } else {
+                    return; // Queue is empty
                 }
-            }
-            
-            // Modified stopping condition:
-            // Continue while: 
-            // 1. Top key < start key, OR
-            // 2. Start is not consistent (using our improved check), OR  
-            // 3. Start hasn't been processed yet (still has infinite g-value)
-            let should_continue = if let Some((top_key, _)) = self.queue.peek() {
-                *top_key < start_key || !self.start_is_consistent() || !self.start_is_processed()
-            } else {
-                false
             };
             
-            if !should_continue {
-                println!("DEBUG: Stopping computation - start is processed and consistent, and top key >= start key");
+            // Check termination condition
+            let start_key = self.calculate_key(self.s_start);
+            let rhs_start = *self.rhs_scores.get(&self.s_start).unwrap_or(&i32::MAX);
+            let g_start = *self.g_scores.get(&self.s_start).unwrap_or(&i32::MAX);
+
+            let top_less_than_start = self.key_less_than(k_old, start_key);
+            let start_inconsistent = rhs_start != g_start;
+            
+            if !top_less_than_start && !start_inconsistent {
+                // Put the item back and break
+                self.current_generation += 1;
+                self.vertex_generations.insert(u, self.current_generation);
+                self.queue.push((k_old, u, self.current_generation));
                 break;
             }
 
-            let (k_old, u) = self.queue.pop().unwrap();
+            // Check if key has changed
             let k_new = self.calculate_key(u);
-
-            if k_old < k_new {
-                // Key has changed, reinsert with new key
-                if iterations < 5 {
-                    println!("DEBUG: Key changed for {:?}, reinserting", u);
-                }
-                self.queue.push((k_new, u));
-            } else {
-                let g_u = *self.g_scores.get(&u).unwrap_or(&i32::MAX);
-                let rhs_u = *self.rhs_scores.get(&u).unwrap_or(&i32::MAX);
-                
-                if iterations < 5 {
-                    println!("DEBUG: Processing {:?} - g: {}, rhs: {}", u, g_u, rhs_u);
-                }
-
-                if g_u > rhs_u {
-                    // Locally underconsistent: set g = rhs and update successors
-                    self.g_scores.insert(u, rhs_u);
-                    
-                    // Update all successors (neighbors this position can reach)
-                    for successor in grid.get_neighbors(&u) {
-                        self.update_vertex(successor, grid, obstacles);
-                    }
-                } else {
-                    // Locally overconsistent: set g = infinity and update u and successors
-                    self.g_scores.insert(u, i32::MAX);
-                    self.update_vertex(u, grid, obstacles);
-                    
-                    for successor in grid.get_neighbors(&u) {
-                        self.update_vertex(successor, grid, obstacles);
-                    }
-                }
+            if self.key_less_than(k_old, k_new) {
+                self.current_generation += 1;
+                self.vertex_generations.insert(u, self.current_generation);
+                self.queue.push((k_new, u, self.current_generation));
+                continue;
             }
-            
-            iterations += 1;
-        }
-        
-        let final_start_g = *self.g_scores.get(&self.start).unwrap_or(&i32::MAX);
-        let final_start_rhs = *self.rhs_scores.get(&self.start).unwrap_or(&i32::MAX);
-        println!("DEBUG: Finished compute_shortest_path - Iterations: {}, Start g: {}, Start rhs: {}, Queue size: {}", 
-                 iterations, final_start_g, final_start_rhs, self.queue.len());
-    }
 
-    /// Extract the optimal path from current start to goal
-    fn extract_path(&self, grid: &Grid, obstacles: &HashSet<Position>) -> Option<Vec<Position>> {
-        println!("DEBUG: Starting extract_path from {:?} to {:?}", self.start, self.goal);
-        
-        // Check if start is reachable
-        let start_g = *self.g_scores.get(&self.start).unwrap_or(&i32::MAX);
-        if start_g == i32::MAX {
-            println!("DEBUG: extract_path failed - start g-value is infinite");
-            return None;
-        }
+            let g_u = *self.g_scores.get(&u).unwrap_or(&i32::MAX);
+            let rhs_u = *self.rhs_scores.get(&u).unwrap_or(&i32::MAX);
 
-        let mut path = vec![self.start];
-        let mut current = self.start;
-        let mut visited = HashSet::new();
-
-        while current != self.goal {
-            if visited.contains(&current) {
-                println!("DEBUG: extract_path failed - cycle detected at {:?}", current);
-                return None; // Cycle detected
-            }
-            visited.insert(current);
-            
-            let neighbors = grid.get_neighbors(&current);
-            println!("DEBUG: At {:?}, neighbors: {:?}", current, neighbors);
-            
-            // Find the neighbor that leads to the goal most efficiently
-            // Instead of just minimum g-value, consider g-value + edge cost + heuristic
-            let next_step = neighbors
-                .iter()
-                .filter(|&pos| {
-                    let edge_cost = self.get_edge_cost(current, *pos, grid, obstacles);
-                    edge_cost != i32::MAX && !visited.contains(pos) // Don't revisit positions
-                })
-                .min_by_key(|&pos| {
-                    let g_val = *self.g_scores.get(pos).unwrap_or(&i32::MAX);
-                    let edge_cost = self.get_edge_cost(current, *pos, grid, obstacles);
-                    let heuristic_to_goal = (pos.x as i32 - self.goal.x as i32).abs() + 
-                                           (pos.y as i32 - self.goal.y as i32).abs();
-                    
-                    if g_val == i32::MAX || edge_cost == i32::MAX {
-                        i32::MAX
-                    } else {
-                        // Use f-value (g + h) for better pathfinding
-                        g_val.saturating_add(heuristic_to_goal)
-                    }
-                });
-
-            if let Some(&next) = next_step {
-                let next_g = *self.g_scores.get(&next).unwrap_or(&i32::MAX);
-                println!("DEBUG: Next step: {:?} with g-value: {}", next, next_g);
+            if g_u > rhs_u {
+                // Make vertex consistent
+                self.g_scores.insert(u, rhs_u);
                 
-                if next_g == i32::MAX {
-                    println!("DEBUG: extract_path failed - next step has infinite g-value");
-                    return None;
-                }
-                
-                path.push(next);
-                current = next;
-                
-                // Safety check to prevent infinite loops
-                if path.len() > grid.size * grid.size {
-                    println!("DEBUG: extract_path failed - path too long");
-                    return None;
+                // Update all predecessors
+                let predecessors = self.pred(u, grid);
+                for s in predecessors {
+                    self.update_vertex(s, grid, obstacles);
                 }
             } else {
-                println!("DEBUG: extract_path failed - no valid next step from {:?}", current);
-                // Print g-values of all neighbors for debugging
-                for neighbor in neighbors {
-                    let g_val = *self.g_scores.get(&neighbor).unwrap_or(&i32::MAX);
-                    let edge_cost = self.get_edge_cost(current, neighbor, grid, obstacles);
-                    let is_visited = visited.contains(&neighbor);
-                    println!("DEBUG: Neighbor {:?} - g: {}, edge_cost: {}, visited: {}", 
-                             neighbor, g_val, edge_cost, is_visited);
-                }
+                // Set g(u) to infinity
+                self.g_scores.insert(u, i32::MAX);
                 
-                // If we can't find a next step, try to backtrack or find alternative
-                // Remove the cycle detection temporarily and try a different approach
-                if let Some(alternative) = self.find_alternative_path(current, &visited, grid, obstacles) {
-                    println!("DEBUG: Found alternative path from {:?} to {:?}", current, alternative);
-                    path.push(alternative);
-                    current = alternative;
-                } else {
-                    return None; // No valid next step and no alternative
+                // Update all predecessors and u itself
+                let mut vertices_to_update = self.pred(u, grid);
+                vertices_to_update.push(u);
+                
+                for s in vertices_to_update {
+                    self.update_vertex(s, grid, obstacles);
                 }
             }
         }
-
-        println!("DEBUG: extract_path succeeded - path length: {}", path.len());
-        Some(path)
     }
 
-    /// Find an alternative path when stuck in a local minimum
-    fn find_alternative_path(&self, current: Position, visited: &HashSet<Position>, 
-                           grid: &Grid, obstacles: &HashSet<Position>) -> Option<Position> {
-        let neighbors = grid.get_neighbors(&current);
+    /// Handle edge cost changes when robot moves or obstacles change
+    fn handle_edge_changes(&mut self, grid: &Grid, obstacles: &HashSet<Position>) {
+        // Update k_m for robot movement (line 38' from paper)
+        self.k_m = self.k_m.saturating_add(self.h(self.s_last, self.s_start));
         
-        // Look for any unvisited neighbor that's not blocked, even if it has a higher g-value
-        // This helps escape local minima
-        let alternative = neighbors
-            .iter()
-            .filter(|&pos| {
-                let edge_cost = self.get_edge_cost(current, *pos, grid, obstacles);
-                edge_cost != i32::MAX && !visited.contains(pos)
-            })
-            .min_by_key(|&pos| {
-                // Prefer positions closer to the goal (Manhattan distance)
-                (pos.x as i32 - self.goal.x as i32).abs() + 
-                (pos.y as i32 - self.goal.y as i32).abs()
-            });
-
-        alternative.copied()
-    }
-
-    /// Check if obstacles have changed since last computation
-    fn check_obstacles_changed(&self, current_obstacles: &HashSet<Position>) -> bool {
-        // For simplicity, assume obstacles might have changed if we have any
-        // In a more sophisticated implementation, we'd track the previous obstacle set
-        !current_obstacles.is_empty()
-    }
-
-    /// Update vertices affected by obstacle changes
-    fn update_changed_obstacles(&mut self, grid: &Grid, obstacles: &HashSet<Position>) {
-        // Update all positions that might be affected by obstacles
-        let mut positions_to_update = HashSet::new();
+        // Store old edge costs for comparison
+        let old_edge_costs = self.edge_costs.clone();
         
-        // Add obstacle positions and their neighbors
-        for &obstacle_pos in obstacles {
-            positions_to_update.insert(obstacle_pos);
-            for neighbor in grid.get_neighbors(&obstacle_pos) {
-                positions_to_update.insert(neighbor);
+        // Update edge costs with new obstacles
+        self.update_edge_costs(grid, obstacles);
+        
+        // Find vertices affected by edge changes
+        let mut affected_vertices = HashSet::new();
+        
+        // Check all positions that might be affected by obstacles
+        for &obs_pos in obstacles {
+            affected_vertices.insert(obs_pos);
+            for neighbor in grid.get_neighbors(&obs_pos) {
+                affected_vertices.insert(neighbor);
             }
         }
         
-        // Also update positions around the current start
-        positions_to_update.insert(self.start);
-        for neighbor in grid.get_neighbors(&self.start) {
-            positions_to_update.insert(neighbor);
+        // Also check for any edge cost changes by comparing old vs new costs
+        for ((u, v), &new_cost) in &self.edge_costs {
+            if let Some(&old_cost) = old_edge_costs.get(&(*u, *v)) {
+                if old_cost != new_cost {
+                    affected_vertices.insert(*u);
+                    affected_vertices.insert(*v);
+                }
+            }
         }
         
         // Update all affected vertices
-        for pos in &positions_to_update {
-            self.update_vertex(*pos, grid, obstacles);
+        for &vertex in &affected_vertices {
+            self.update_vertex(vertex, grid, obstacles);
+        }
+    }
+
+    /// Update edge costs when obstacles change
+    fn update_edge_costs(&mut self, grid: &Grid, obstacles: &HashSet<Position>) {
+        self.edge_costs.clear();
+        
+        for x in 0..grid.size {
+            for y in 0..grid.size {
+                let pos = Position { x, y };
+                for neighbor in grid.get_neighbors(&pos) {
+                    let cost = if obstacles.contains(&neighbor) || 
+                                  grid.cells[neighbor.x][neighbor.y] == Cell::Wall {
+                        i32::MAX
+                    } else {
+                        1
+                    };
+                    self.edge_costs.insert((pos, neighbor), cost);
+                }
+            }
+        }
+    }
+
+    /// Detect if edge costs have changed since last computation
+    fn detect_edge_changes(&self, grid: &Grid, obstacles: &HashSet<Position>) -> bool {
+        // Check if we have no stored edge costs (first run)
+        if self.edge_costs.is_empty() {
+            return true;
         }
         
-        println!("DEBUG: Updated {} vertices due to obstacle changes", positions_to_update.len());
+        // Check if any obstacles affect our stored edge costs
+        for &obs_pos in obstacles {
+            for neighbor in grid.get_neighbors(&obs_pos) {
+                if let Some(&stored_cost) = self.edge_costs.get(&(neighbor, obs_pos)) {
+                    if stored_cost != i32::MAX {
+                        return true; // Edge cost changed from passable to blocked
+                    }
+                }
+                if let Some(&stored_cost) = self.edge_costs.get(&(obs_pos, neighbor)) {
+                    if stored_cost != i32::MAX {
+                        return true; // Edge cost changed from passable to blocked
+                    }
+                }
+            }
+        }
+        
+        false
     }
 }
 
 impl PathfindingAlgorithm for DStarLite {
-    /// Finds a path from start to goal using the D* Lite algorithm.
+    /// procedure Main() - lines 21'-35'
     fn find_path(
         &mut self,
         grid: &Grid,
@@ -393,49 +334,85 @@ impl PathfindingAlgorithm for DStarLite {
         goal: Position,
         obstacles: &HashSet<Position>,
     ) -> Option<Vec<Position>> {
-        println!("DEBUG: find_path called - Start: {:?}, Goal: {:?}, Obstacles: {:?}", start, goal, obstacles);
-        
         // Handle goal changes by reinitializing
-        if self.goal != goal {
-            println!("DEBUG: Goal changed, reinitializing");
-            *self = DStarLite::new(start, goal);
+        if !self.initialized || self.s_goal != goal {
+            self.s_goal = goal;
+            self.s_start = start;
+            self.s_last = start;
+            self.initialize();
+            self.update_edge_costs(grid, obstacles);
+            self.compute_shortest_path(grid, obstacles);
+        } else if self.s_start != start {
+            // Handle start position changes
+            self.s_last = self.s_start;
+            self.s_start = start;
+            self.handle_edge_changes(grid, obstacles);
+            self.compute_shortest_path(grid, obstacles);
+        } else {
+            // Handle only edge changes (obstacles)
+            self.handle_edge_changes(grid, obstacles);
+            self.compute_shortest_path(grid, obstacles);
         }
 
-        // Handle start changes
-        if self.start != start {
-            println!("DEBUG: Start changed from {:?} to {:?}", self.start, start);
-            // Update k_m when start changes
-            if self.initial_computation_done {
-                self.k_m = self.k_m.saturating_add(self.heuristic(self.last_start));
-                println!("DEBUG: Updated k_m to {}", self.k_m);
+        // Check if there's a path
+        let g_start = *self.g_scores.get(&self.s_start).unwrap_or(&i32::MAX);
+        if g_start == i32::MAX {
+            return None;
+        }
+
+        // Reconstruct path by following optimal policy
+        self.reconstruct_path(grid, obstacles)
+    }
+}
+
+impl DStarLite {
+    /// Reconstruct path from start to goal
+    fn reconstruct_path(&self, grid: &Grid, obstacles: &HashSet<Position>) -> Option<Vec<Position>> {
+        let mut path = vec![self.s_start];
+        let mut current = self.s_start;
+
+        // Follow path from start to goal (line 34' from paper)
+        while current != self.s_goal {
+            // Find best successor: s_start = arg min_{s'∈Succ(s_start)} {c(s_start,s') + g(s')}
+            let successors = self.succ(current, grid);
+            let next_step = successors
+                .iter()
+                .filter(|&s_prime| self.c(current, *s_prime, grid, obstacles) != i32::MAX)
+                .min_by_key(|&s_prime| {
+                    let cost = self.c(current, *s_prime, grid, obstacles);
+                    let g_s_prime = *self.g_scores.get(s_prime).unwrap_or(&i32::MAX);
+                    if cost == i32::MAX || g_s_prime == i32::MAX {
+                        i32::MAX
+                    } else {
+                        cost.saturating_add(g_s_prime)
+                    }
+                });
+
+            if let Some(&next) = next_step {
+                path.push(next);
+                current = next;
+                
+                // Safety check to prevent infinite loops
+                if path.len() > grid.size * grid.size {
+                    return None;
+                }
+            } else {
+                // No valid next step found
+                return None;
             }
-            self.last_start = self.start;
-            self.start = start;
-            
-            // When start changes, we need to update the vertex and recompute
-            if self.initial_computation_done {
-                self.update_vertex(self.start, grid, obstacles);
-                println!("DEBUG: Updated start vertex after position change");
-            }
         }
 
-        // Initialize if not done yet
-        self.initialize();
+        Some(path)
+    }
+}
 
-        // Always recompute when obstacles might have changed or start moved
-        // Check if obstacles have changed by comparing with known obstacles
-        let obstacles_changed = self.check_obstacles_changed(obstacles);
-        if obstacles_changed {
-            println!("DEBUG: Obstacles changed, updating affected vertices");
-            self.update_changed_obstacles(grid, obstacles);
+impl DStarLite {
+    /// Helper function to compare keys (k1 < k2)
+    fn key_less_than(&self, k1: Key, k2: Key) -> bool {
+        if k1.k1 != k2.k1 {
+            k1.k1 < k2.k1
+        } else {
+            k1.k2 < k2.k2
         }
-
-        // Compute shortest path
-        self.compute_shortest_path(grid, obstacles);
-        
-        // Extract and return the path
-        let result = self.extract_path(grid, obstacles);
-        println!("DEBUG: find_path returning: {:?}", result.as_ref().map(|p| format!("Some(path with {} steps)", p.len())));
-        result
     }
 }
