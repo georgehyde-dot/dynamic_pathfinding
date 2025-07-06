@@ -129,10 +129,10 @@ impl EnvironmentSetup {
 pub struct AlgorithmResult {
     pub name: String,
     pub statistics: Statistics,
-    pub algorithm_stats: AlgorithmStats,
-    pub timing_data: TimingData,
     pub success: bool,
     pub final_position: Position,
+    pub algorithm_stats: AlgorithmStats,
+    pub timing_data: TimingData,
 }
 
 pub struct AlgorithmRunner {
@@ -153,8 +153,8 @@ impl AlgorithmRunner {
 }
 
 pub struct Simulation {
-    grid: Grid,
-    agent: Agent,
+    pub grid: Grid,
+    pub agent: Agent,
     algorithm: Box<dyn PathfindingAlgorithm>,
     config: Config,
     optimal_path_length: usize,
@@ -174,11 +174,17 @@ impl Simulation {
         let grid = environment.create_grid();
         let agent = Agent::new(grid.start);
 
+        // Debug print to see what algorithm is being selected
+        println!("Creating simulation with algorithm: {}", config.algorithm);
+
         let algorithm: Box<dyn PathfindingAlgorithm> = match config.algorithm.as_str() {
             "a_star" => Box::new(AStar::new()),
             "d_star_lite" => Box::new(DStarLite::new(grid.start, grid.goal)),
             "hybrid" => Box::new(HybridAStarDStar::new(grid.start, grid.goal)),
-            _ => panic!("Select 'a_star', 'd_star_lite', 'hybrid', or 'all' for algorithm"),
+            _ => {
+                println!("Unknown algorithm '{}', defaulting to a_star", config.algorithm);
+                Box::new(AStar::new())
+            }
         };
 
         // Calculate optimal path using A* (no obstacles, only walls)
