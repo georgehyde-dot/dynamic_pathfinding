@@ -42,11 +42,12 @@ pub struct DStarLite {
     s_last: Position,                      // Last start position
     edge_costs: HashMap<(Position, Position), i32>, // c(u,v) edge costs
     pub initialized: bool,                     // Track if algorithm has been initialized
+    pub last_known_obstacles: HashSet<Position>,  // Track what obstacles we've seen
+    pub last_start: Position,                     // Track last start position
 }
 
 impl DStarLite {
     /// Creates a new instance of the D* Lite algorithm.
-    /// Corresponds to the `Initialize()` procedure in the paper.
     pub fn new(start: Position, goal: Position) -> Self {
         DStarLite {
             g_scores: HashMap::new(),
@@ -60,6 +61,8 @@ impl DStarLite {
             s_last: start,
             edge_costs: HashMap::new(),
             initialized: false,
+            last_known_obstacles: HashSet::new(),  // Initialize properly
+            last_start: start,                     // Initialize properly
         }
     }
     
@@ -326,7 +329,6 @@ impl DStarLite {
 }
 
 impl PathfindingAlgorithm for DStarLite {
-    /// procedure Main() - lines 21'-35'
     fn find_path(
         &mut self,
         grid: &Grid,
@@ -334,7 +336,7 @@ impl PathfindingAlgorithm for DStarLite {
         goal: Position,
         obstacles: &HashSet<Position>,
     ) -> Option<Vec<Position>> {
-        // Handle goal changes by reinitializing
+        // Only reinitialize if goal changed
         if !self.initialized || self.s_goal != goal {
             self.s_goal = goal;
             self.s_start = start;
@@ -342,28 +344,48 @@ impl PathfindingAlgorithm for DStarLite {
             self.initialize();
             self.update_edge_costs(grid, obstacles);
             self.compute_shortest_path(grid, obstacles);
-        } else if self.s_start != start {
-            // Handle start position changes
-            self.s_last = self.s_start;
-            self.s_start = start;
-            self.handle_edge_changes(grid, obstacles);
-            self.compute_shortest_path(grid, obstacles);
+            self.last_known_obstacles = obstacles.clone();
         } else {
-            // Handle only edge changes (obstacles)
-            self.handle_edge_changes(grid, obstacles);
-            self.compute_shortest_path(grid, obstacles);
+            // For incremental updates, only update what changed
+            let obstacles_changed = obstacles != &self.last_known_obstacles;
+            let start_changed = self.s_start != start;
+            
+            // Only update if something actually changed
+            if start_changed || obstacles_changed {
+                if start_changed {
+                    self.s_last = self.s_start;
+                    self.s_start = start;
+                    self.k_m = self.k_m.saturating_add(self.h(self.s_last, self.s_start));
+                }
+                
+                if obstacles_changed {
+                    // Use incremental update instead of full rebuild
+                    self.update_edge_costs_incremental(grid, obstacles);
+                }
+                
+                self.compute_shortest_path(grid, obstacles);
+                self.last_known_obstacles = obstacles.clone();
+            }
         }
-
-        // Check if there's a path
+        
+        // Check if path exists
         let g_start = *self.g_scores.get(&self.s_start).unwrap_or(&i32::MAX);
         if g_start == i32::MAX {
             return None;
         }
 
-        // Reconstruct path by following optimal policy
         self.reconstruct_path(grid, obstacles)
     }
+    
+    fn update_environment(&mut self, grid: &Grid, obstacles: &HashSet<Position>) {
+        // Only update if obstacles actually changed
+        if obstacles != &self.last_known_obstacles {
+            self.update_edge_costs_incremental(grid, obstacles);
+            self.last_known_obstacles = obstacles.clone();
+        }
+    }
 }
+
 
 impl DStarLite {
     /// Reconstruct path from start to goal
@@ -413,6 +435,35 @@ impl DStarLite {
             k1.k1 < k2.k1
         } else {
             k1.k2 < k2.k2
+        }
+    }
+    /// EFFICIENT: Update only edges that actually changed
+    pub fn update_edge_costs_incremental(&mut self, grid: &Grid, new_obstacles: &HashSet<Position>) {
+        let mut changed_vertices = HashSet::new();
+        
+        // Handle new obstacles
+        for &obs_pos in new_obstacles.difference(&self.last_known_obstacles) {
+            // Update edges TO this position (now blocked)
+            for neighbor in grid.get_neighbors(&obs_pos) {
+                self.edge_costs.insert((neighbor, obs_pos), i32::MAX);
+                changed_vertices.insert(neighbor);
+            }
+            changed_vertices.insert(obs_pos);
+        }
+        
+        // Handle removed obstacles
+        for &obs_pos in self.last_known_obstacles.difference(new_obstacles) {
+            // Update edges TO this position (now passable)
+            for neighbor in grid.get_neighbors(&obs_pos) {
+                self.edge_costs.insert((neighbor, obs_pos), 1);
+                changed_vertices.insert(neighbor);
+            }
+            changed_vertices.insert(obs_pos);
+        }
+        
+        // Only update vertices that were actually affected
+        for &vertex in &changed_vertices {
+            self.update_vertex(vertex, grid, new_obstacles);
         }
     }
 }

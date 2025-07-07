@@ -1,13 +1,13 @@
 use crate::algorithms::common::PathfindingAlgorithm;
 use crate::algorithms::a_star::AStar;
-use crate::algorithms::d_star_lite::DStarLite;
+use crate::algorithms::d_star_lite_simple::DStarLiteSimple;
 use crate::grid::{Grid, Position};
 use std::collections::HashSet;
 
-/// Hybrid algorithm that uses A* for initial path finding and D* Lite for updates
+/// Hybrid algorithm that uses A* for initial path finding and D* Lite Simple for updates
 pub struct HybridAStarDStar {
     a_star: AStar,
-    d_star_lite: DStarLite,
+    d_star_lite_simple: DStarLiteSimple,
     initial_path_found: bool,
     last_start: Position,
     last_goal: Position,
@@ -21,7 +21,7 @@ impl HybridAStarDStar {
     pub fn new(start: Position, goal: Position) -> Self {
         HybridAStarDStar {
             a_star: AStar::new(),
-            d_star_lite: DStarLite::new(start, goal),
+            d_star_lite_simple: DStarLiteSimple::new(),
             initial_path_found: false,
             last_start: start,
             last_goal: goal,
@@ -53,12 +53,12 @@ impl HybridAStarDStar {
         println!("\n=== HYBRID ALGORITHM USAGE STATISTICS ===");
         println!("Total pathfinding calls: {}", total_calls);
         println!("A* usage: {} calls ({:.1}%)", self.a_star_usage_count, a_star_percentage);
-        println!("D* Lite usage: {} calls ({:.1}%)", self.d_star_usage_count, d_star_percentage);
+        println!("D* Lite Simple usage: {} calls ({:.1}%)", self.d_star_usage_count, d_star_percentage);
         println!();
         
         if total_calls > 0 {
             if self.a_star_usage_count == 1 && self.d_star_usage_count > 0 {
-                println!("✓ Optimal hybrid performance: A* used once for initial path, D* Lite handled all updates");
+                println!("✓ Optimal hybrid performance: A* used once for initial path, D* Lite Simple handled all updates");
             } else if self.a_star_usage_count > 1 {
                 println!("⚠ Multiple A* calls detected - may indicate significant environment changes");
                 println!("  This could be due to goal changes or major start position jumps");
@@ -66,27 +66,6 @@ impl HybridAStarDStar {
                 println!("⚠ Only A* was used - no incremental updates occurred");
             }
         }
-    }
-
-    /// Initialize D* Lite with A* path results
-    fn initialize_d_star_from_astar_path(&mut self, path: &[Position], grid: &Grid, obstacles: &HashSet<Position>) {
-        // Calculate distances from goal for each position in the path
-        for (i, &pos) in path.iter().enumerate() {
-            let distance_to_goal = (path.len() - 1 - i) as i32;
-            self.d_star_lite.g_scores.insert(pos, distance_to_goal);
-            self.d_star_lite.rhs_scores.insert(pos, distance_to_goal);
-        }
-        
-        // Set goal values
-        self.d_star_lite.g_scores.insert(self.last_goal, 0);
-        self.d_star_lite.rhs_scores.insert(self.last_goal, 0);
-        
-        // Update edge costs
-        self.d_star_lite.update_edge_costs(grid, obstacles);
-        
-        // Mark as initialized
-        self.d_star_lite.initialized = true;
-        self.initial_path_found = true;
     }
 
     /// Check if we need to use A* (first run or major changes)
@@ -109,7 +88,7 @@ impl HybridAStarDStar {
         // Check if obstacles changed significantly
         let obstacles_changed = obstacles != &self.last_obstacles;
         let major_obstacle_change = obstacles_changed && 
-            (obstacles.len() as i32 - self.last_obstacles.len() as i32).abs() > 2;
+            (obstacles.len() as i32 - self.last_obstacles.len() as i32).abs() > 5;
         
         major_obstacle_change
     }
@@ -125,38 +104,40 @@ impl PathfindingAlgorithm for HybridAStarDStar {
     ) -> Option<Vec<Position>> {
         // Check if we should use A* for this computation
         if self.should_use_astar(start, goal, obstacles) {
-            // Only increment A* usage counter if this is NOT the initial path finding
-            if self.initial_path_found {
-                self.a_star_usage_count += 1;
-            }
+            // Increment A* usage counter
+            self.a_star_usage_count += 1;
             
             // Use A* to find initial path
             if let Some(path) = self.a_star.find_path(grid, start, goal, obstacles) {
-                // Update D* Lite with A* results
+                // Update tracking variables
                 self.last_start = start;
                 self.last_goal = goal;
                 self.last_obstacles = obstacles.clone();
-                
-                // Reinitialize D* Lite with new goal if needed
-                if self.d_star_lite.s_goal != goal {
-                    self.d_star_lite = DStarLite::new(start, goal);
-                }
-                
-                self.initialize_d_star_from_astar_path(&path, grid, obstacles);
+                self.initial_path_found = true;
                 
                 return Some(path);
             } else {
                 return None;
             }
         } else {
-            // Increment D* Lite usage counter
+            // Increment D* Lite Simple usage counter
             self.d_star_usage_count += 1;
             
-            // Use D* Lite for incremental updates
+            // Use D* Lite Simple for incremental updates
+            let result = self.d_star_lite_simple.find_path(grid, start, goal, obstacles);
+            
+            // Update tracking variables
             self.last_start = start;
             self.last_obstacles = obstacles.clone();
             
-            return self.d_star_lite.find_path(grid, start, goal, obstacles);
+            if let Some(ref _path) = result {
+                return result;
+            } else {
+                // Fallback to A* if D* Lite Simple fails
+                self.a_star_usage_count += 1;
+                let fallback_result = self.a_star.find_path(grid, start, goal, obstacles);
+                return fallback_result;
+            }
         }
     }
     

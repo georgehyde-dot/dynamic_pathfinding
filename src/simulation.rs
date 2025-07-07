@@ -2,6 +2,7 @@ use crate::agent::Agent;
 use crate::algorithms::a_star::AStar;
 use crate::algorithms::common::PathfindingAlgorithm;
 use crate::algorithms::d_star_lite::DStarLite;
+
 use crate::algorithms::hybrid_a_star_d_star::HybridAStarDStar;
 use crate::config::Config;
 use crate::grid::{Cell, Grid, Position};
@@ -10,6 +11,7 @@ use rand::{Rng, SeedableRng};
 use std::collections::HashSet;
 use std::thread;
 use std::time::{Duration, Instant};
+
 #[derive(Debug, Clone)]
 pub struct ObstacleGroup {
     positions: HashSet<Position>,
@@ -22,22 +24,23 @@ pub struct EnvironmentSetup {
     pub start: Position,
     pub goal: Position,
     pub walls: HashSet<Position>,
-    pub obstacle_timeline: Vec<HashSet<Position>>, // Each entry is obstacles to place at that cycle
+
+    pub obstacle_timeline: Vec<HashSet<Position>>,
     pub obstacle_cycle_interval: usize,
     pub obstacle_persistence_cycles: usize,
 }
 
 impl EnvironmentSetup {
-    /// Generate a new environment setup with predetermined walls and obstacle timeline
+
     pub fn generate(config: &Config, seed: Option<u64>) -> Self {
-        // Use seed for reproducible results
+
         let mut rng = if let Some(seed) = seed {
             rand::rngs::StdRng::seed_from_u64(seed)
         } else {
             rand::rngs::StdRng::from_entropy()
         };
 
-        // Generate grid layout
+
         let start = Position { 
             x: rng.gen_range(0..config.grid_size/2), 
             y: rng.gen_range(0..config.grid_size/2) 
@@ -47,7 +50,7 @@ impl EnvironmentSetup {
             y: rng.gen_range(config.grid_size/2..config.grid_size) 
         };
 
-        // Generate walls
+
         let mut walls = HashSet::new();
         let mut walls_placed = 0;
         let mut attempts = 0;
@@ -63,15 +66,17 @@ impl EnvironmentSetup {
             attempts += 1;
         }
 
-        // Pre-generate obstacle timeline
+
         let obstacle_cycle_interval = 5;
         let obstacle_persistence_cycles = 5;
-        let max_cycles = config.grid_size * config.grid_size; // Estimate max simulation length
+
+        let max_cycles = config.grid_size * config.grid_size;
         let num_obstacle_cycles = max_cycles / obstacle_cycle_interval;
         
         let mut obstacle_timeline = Vec::new();
         
-        for cycle in 0..num_obstacle_cycles {
+
+        for _cycle in 0..num_obstacle_cycles {
             let mut obstacle_group = HashSet::new();
             let mut attempts = 0;
             let max_attempts = config.num_obstacles * 10;
@@ -81,7 +86,7 @@ impl EnvironmentSetup {
                 let y = rng.gen_range(0..config.grid_size);
                 let pos = Position { x, y };
 
-                // Check if position is valid for obstacle placement
+
                 if pos != start && pos != goal && 
                    !walls.contains(&pos) && 
                    !obstacle_group.contains(&pos) {
@@ -93,8 +98,8 @@ impl EnvironmentSetup {
             obstacle_timeline.push(obstacle_group);
         }
 
-        // println!("Generated environment - Start: {:?}, Goal: {:?}, Walls: {}, Obstacle cycles: {}", 
-        //          start, goal, walls.len(), obstacle_timeline.len());
+
+
 
         EnvironmentSetup {
             grid_size: config.grid_size,
@@ -107,11 +112,11 @@ impl EnvironmentSetup {
         }
     }
 
-    /// Create a grid from this environment setup
+
     pub fn create_grid(&self) -> Grid {
         let mut cells = vec![vec![Cell::Empty; self.grid_size]; self.grid_size];
         
-        // Place walls
+
         for &wall_pos in &self.walls {
             cells[wall_pos.x][wall_pos.y] = Cell::Wall;
         }
@@ -174,17 +179,18 @@ impl Simulation {
         let grid = environment.create_grid();
         let agent = Agent::new(grid.start);
 
-        // Debug print to see what algorithm is being selected
-        println!("Creating simulation with algorithm: {}", config.algorithm);
+
+
 
         let algorithm: Box<dyn PathfindingAlgorithm> = match config.algorithm.as_str() {
             "a_star" => Box::new(AStar::new()),
             "d_star_lite" => Box::new(DStarLite::new(grid.start, grid.goal)),
+
             "hybrid" => Box::new(HybridAStarDStar::new(grid.start, grid.goal)),
             _ => return Err(format!("Unknown algorithm: '{}'", config.algorithm)),
         };
 
-        // Calculate optimal path using A* (no obstacles, only walls)
+
         let optimal_path_length = Self::calculate_optimal_path_with_astar(&grid);
         
         if optimal_path_length == 0 {
@@ -206,260 +212,6 @@ impl Simulation {
         })
     }
 
-    /// Run all algorithms and compare results
-    pub fn run_all_algorithms(config: Config) -> Result<Vec<AlgorithmResult>, String> {
-        // Generate a random seed for this run, but use it consistently across all algorithms
-        let run_seed = rand::random::<u64>();
-        let environment = EnvironmentSetup::generate(&config, Some(run_seed));
-        
-        // Define available algorithms - use names that match the simulation constructor
-        let algorithms = [
-            AlgorithmRunner::new("a_star", |_start, _goal| Box::new(AStar::new())),
-            AlgorithmRunner::new("d_star_lite", |start, goal| Box::new(DStarLite::new(start, goal))),
-            AlgorithmRunner::new("hybrid", |start, goal| Box::new(HybridAStarDStar::new(start, goal))),
-        ];
-
-        let mut results = Vec::new();
-
-        // println!("Running comparison of {} algorithms...", algorithms.len());
-        // println!("Environment seed: {} (for reproducibility)", run_seed);
-        // println!("Environment: Grid {}x{}, Walls: {}, Obstacles: {}", 
-        //          environment.grid_size, environment.grid_size, 
-        //          environment.walls.len(), config.num_obstacles);
-        // println!("Start: {:?}, Goal: {:?}", environment.start, environment.goal);
-        // println!();
-
-        // create grid for both algorithms to use
-
-        let grid = environment.create_grid();
-
-        // Calculate optimal path using A* (no obstacles, only walls)
-        let optimal_path_length = Self::calculate_optimal_path_with_astar(&grid);
-        
-        if optimal_path_length == 0 {
-            return Err(format!("No valid path exists from start {:?} to goal {:?}! Grid has {} walls.", 
-                              grid.start, grid.goal, 
-                              grid.cells.iter().flatten().filter(|&cell| *cell == Cell::Wall).count()));
-        }
-
-        for (i, algorithm_runner) in algorithms.iter().enumerate() {
-            // println!("Running algorithm {} of {}: {}", i + 1, algorithms.len(), algorithm_runner.name);
-            
-            // Create a new config for this algorithm run (no visualization)
-            let mut algorithm_config = config.clone();
-            algorithm_config.no_visualization = true;
-            algorithm_config.algorithm = algorithm_runner.name.clone();
-
-            // Create simulation with the shared environment
-            match Self::new_with_environment_and_algorithm(
-                algorithm_config,
-                environment.clone(),
-                (algorithm_runner.create_algorithm)(environment.start, environment.goal),
-                optimal_path_length,
-                &grid
-            ) {
-                Ok(mut simulation) => {
-                    // Run the simulation
-                    let (statistics, algorithm_stats, timing_data) = simulation.run();
-                    let success = simulation.agent.position == simulation.grid.goal;
-                    let final_position = simulation.agent.position;
-
-                    results.push(AlgorithmResult {
-                        name: algorithm_runner.name.clone(),
-                        statistics,
-                        algorithm_stats,
-                        timing_data,
-                        success,
-                        final_position,
-                    });
-
-                    // println!("Completed: {} - Success: {}, Moves: {}", 
-                    //          algorithm_runner.name, success, results.last().unwrap().statistics.total_moves);
-                }
-                Err(e) => {
-                    // Handle simulation creation failure
-                    if !config.quiet {
-                        println!("Failed to create simulation for {}: {}", algorithm_runner.name, e);
-                    }
-                    
-                    let failed_result = AlgorithmResult {
-                        name: algorithm_runner.name.clone(),
-                        statistics: Statistics::new(config.num_walls, config.num_obstacles, 0),
-                        algorithm_stats: AlgorithmStats::AStar(0),
-                        timing_data: TimingData::new(),
-                        success: false,
-                        final_position: grid.start,
-                    };
-                    results.push(failed_result);
-                }
-            }
-        }
-
-        Ok(results)
-    }
-
-    /// Create simulation with specific environment and algorithm
-    pub fn new_with_environment_and_algorithm(
-        config: Config, 
-        environment: EnvironmentSetup, 
-        algorithm: Box<dyn PathfindingAlgorithm>,
-        optimal_path_length: usize,
-        grid: &Grid
-    ) -> Result<Self, String> {
-
-        let agent = Agent::new(grid.start);
-
-        let sim_grid = grid.clone();
-
-        Ok(Simulation {
-            grid: sim_grid,
-            agent,
-            algorithm,
-            config,
-            optimal_path_length,
-            environment,
-            active_obstacle_groups: Vec::new(),
-            cycles_since_last_obstacle: 0,
-            current_obstacle_cycle: 0,
-        })
-    }
-
-    /// Print comparison results in a nice table format
-    pub fn print_comparison_results(results: &[AlgorithmResult]) {
-        println!("\n=== ALGORITHM COMPARISON RESULTS ===");
-        println!();
-        
-        // Print header
-        println!("{:<15} {:<8} {:<8} {:<8} {:<12} {:<15} {:<15} {:<15} {:<15} {:<20}", 
-                 "Algorithm", "Success", "Moves", "Optimal", "Efficiency", "Avg Observe", "Avg Find Path", "Total Calls", "Final Position", "Algorithm Usage");
-        println!("{}", "-".repeat(110));
-
-        // Print results for each algorithm
-        for result in results {
-            let success_str = if result.success { "✓" } else { "✗" };
-            let efficiency_str = format!("{:.3}", result.statistics.route_efficiency);
-            let final_pos_str = format!("({},{})", result.final_position.x, result.final_position.y);
-            let extra_moves = result.statistics.total_moves.saturating_sub(result.statistics.optimal_path_length);
-            
-            let usage_str = match &result.algorithm_stats {
-                AlgorithmStats::AStar(calls) => format!("{} calls", calls),
-                AlgorithmStats::DStarLite(calls) => format!("{} calls", calls),
-                AlgorithmStats::Hybrid { a_star_calls, d_star_calls } => {
-                    format!("A*:{} D*:{}", a_star_calls, d_star_calls)
-                }
-            };
-            
-            let avg_observe_str = format!("{:.2?}", result.timing_data.average_observe_time());
-            let avg_find_path_str = format!("{:.2?}", result.timing_data.average_find_path_time());
-            let total_calls_str = format!("{}", result.timing_data.total_calls());
-            
-            println!("{:<15} {:<8} {:<8} {:<8} {:<12} {:<15} {:<15} {:<15} {:<15} {:<20}", 
-                     result.name,
-                     success_str,
-                     result.statistics.total_moves,
-                     result.statistics.optimal_path_length,
-                     efficiency_str,
-                     avg_observe_str,
-                     avg_find_path_str,
-                     total_calls_str,
-                     final_pos_str,
-                     usage_str);
-        }
-
-        // Print detailed hybrid algorithm breakdown
-        println!();
-        println!("=== HYBRID ALGORITHM BREAKDOWN ===");
-        let mut found_hybrid = false;
-        for result in results {
-            if let AlgorithmStats::Hybrid { a_star_calls, d_star_calls } = &result.algorithm_stats {
-                found_hybrid = true;
-                let total_calls = a_star_calls + d_star_calls;
-                if total_calls > 0 {
-                    let a_star_pct = (*a_star_calls as f64 / total_calls as f64) * 100.0;
-                    let d_star_pct = (*d_star_calls as f64 / total_calls as f64) * 100.0;
-                    println!("{}: Total calls: {}", result.name, total_calls);
-                    println!("  • A* usage: {} calls ({:.1}%)", a_star_calls, a_star_pct);
-                    println!("  • D* Lite usage: {} calls ({:.1}%)", d_star_calls, d_star_pct);
-                    println!("  • Average observe time: {:.2?}", result.timing_data.average_observe_time());
-                    println!("  • Average find_path time: {:.2?}", result.timing_data.average_find_path_time());
-                    
-                    // Performance analysis
-                    if *a_star_calls == 0 && *d_star_calls > 0 {
-                        println!("  ✓ Optimal hybrid performance: Only initial A* setup used, D* Lite handled all runtime updates");
-                    } else if *a_star_calls > 0 {
-                        println!("  ⚠ Multiple A* calls: {} - indicates significant environment changes", a_star_calls);
-                    } else if *d_star_calls == 0 {
-                        println!("  ⚠ Only A* used - no incremental updates occurred");
-                    }
-                    println!();
-                }
-            }
-        }
-        
-        if !found_hybrid {
-            println!("No hybrid algorithms were run in this comparison.");
-        }
-
-        println!();
-
-        // Print summary analysis
-        let successful_algorithms: Vec<_> = results.iter().filter(|r| r.success).collect();
-        
-        if !successful_algorithms.is_empty() {
-            println!("=== PERFORMANCE ANALYSIS ===");
-            
-            // Find best performing algorithm
-            let best_moves = successful_algorithms.iter()
-                .min_by_key(|r| r.statistics.total_moves)
-                .unwrap();
-            
-            let best_efficiency = successful_algorithms.iter()
-                .min_by(|a, b| a.statistics.route_efficiency.partial_cmp(&b.statistics.route_efficiency).unwrap())
-                .unwrap();
-
-            let fastest_find_path = successful_algorithms.iter()
-                .min_by_key(|r| r.timing_data.average_find_path_time())
-                .unwrap();
-
-            let fastest_observe = successful_algorithms.iter()
-                .min_by_key(|r| r.timing_data.average_observe_time())
-                .unwrap();
-
-            println!("Best by moves: {} ({} moves)", best_moves.name, best_moves.statistics.total_moves);
-            println!("Best by efficiency: {} ({:.3} efficiency)", best_efficiency.name, best_efficiency.statistics.route_efficiency);
-            println!("Fastest find_path: {} ({:.2?} avg)", fastest_find_path.name, fastest_find_path.timing_data.average_find_path_time());
-            println!("Fastest observe: {} ({:.2?} avg)", fastest_observe.name, fastest_observe.timing_data.average_observe_time());
-            
-            // Compare performance
-            if successful_algorithms.len() > 1 {
-                let move_counts: Vec<_> = successful_algorithms.iter().map(|r| r.statistics.total_moves).collect();
-                let min_moves = *move_counts.iter().min().unwrap();
-                let max_moves = *move_counts.iter().max().unwrap();
-                let move_difference = max_moves - min_moves;
-                
-                println!("Move count difference: {} moves ({:.1}% variation)", 
-                         move_difference, 
-                         (move_difference as f64 / min_moves as f64) * 100.0);
-
-                // Timing comparison
-                let find_path_times: Vec<_> = successful_algorithms.iter()
-                    .map(|r| r.timing_data.average_find_path_time())
-                    .collect();
-                let min_find_path_time = *find_path_times.iter().min().unwrap();
-                let max_find_path_time = *find_path_times.iter().max().unwrap();
-                
-                println!("Find_path time range: {:.2?} to {:.2?}", min_find_path_time, max_find_path_time);
-                
-                if max_find_path_time > min_find_path_time {
-                    let time_ratio = max_find_path_time.as_nanos() as f64 / min_find_path_time.as_nanos() as f64;
-                    println!("Slowest algorithm is {:.1}x slower than fastest", time_ratio);
-                }
-            }
-        } else {
-            println!("No algorithms successfully reached the goal.");
-        }
-    }
-
     pub fn run(&mut self) -> (Statistics, AlgorithmStats, TimingData) {
         let mut stats = Statistics::new(
             self.config.num_walls, 
@@ -469,9 +221,6 @@ impl Simulation {
 
         let mut total_iterations = 0;
         let max_iterations = self.grid.size * self.grid.size * 4;
-        
-        // Track algorithm calls
-        let mut algorithm_calls = 0;
         
         // Track timing data
         let mut timing_data = TimingData::new();
@@ -490,55 +239,114 @@ impl Simulation {
             thread::sleep(Duration::from_millis(self.config.delay_ms));
         }
 
+        // Calculate initial path
+        let initial_path = self.algorithm.find_path(
+            &self.grid,
+            self.agent.position,
+            self.grid.goal,
+            &self.agent.known_obstacles,
+        );
+        
+        if let Some(path) = initial_path {
+            self.agent.set_path(path);
+        } else {
+            // No initial path found
+            return (stats, self.get_algorithm_stats(), timing_data);
+        }
+
         while self.agent.position != self.grid.goal && total_iterations < max_iterations {
             // Update obstacle lifecycle using pre-generated timeline
-            self.update_obstacles_from_timeline();
+            let obstacles_changed = self.update_obstacles_from_timeline();
             
-            // Time the observe call
+            // Agent observes environment
             let observe_start = Instant::now();
             self.agent.observe(&self.grid);
             let observe_duration = observe_start.elapsed();
             timing_data.observe_times.push(observe_duration);
             
-            // Time the find_path call
-            let find_path_start = Instant::now();
-            let path = self.algorithm.find_path(
-                &self.grid,
-                self.agent.position,
-                self.grid.goal,
-                &self.agent.known_obstacles,
-            );
-            let find_path_duration = find_path_start.elapsed();
-            timing_data.find_path_times.push(find_path_duration);
+            // Check if path needs recalculation
+            let needs_recalc = self.agent.path_needs_recalculation(&self.grid) || 
+                              self.agent.is_path_blocked(&self.grid) ||
+                              obstacles_changed;
             
-            // Track algorithm calls
-            algorithm_calls += 1;
-
-            if let Some(path) = path {
-                // Reset stuck counter when path is found
-                stuck_attempts = 0;
+            if needs_recalc {
+                if !self.config.no_visualization {
+                    println!("Path blocked or environment changed - recalculating...");
+                }
                 
-                if path.len() > 1 {
-                    let next_pos = path[1];
+                // Notify algorithm of environment changes (for incremental algorithms)
+                self.algorithm.update_environment(&self.grid, &self.agent.known_obstacles);
+                
+                // Recalculate path
+                let find_path_start = Instant::now();
+                let new_path = self.algorithm.find_path(
+                    &self.grid,
+                    self.agent.position,
+                    self.grid.goal,
+                    &self.agent.known_obstacles,
+                );
+                let find_path_duration = find_path_start.elapsed();
+                timing_data.find_path_times.push(find_path_duration);
+                
+                if let Some(path) = new_path {
+                    self.agent.set_path(path);
+                    stuck_attempts = 0; // Reset stuck counter
+                    
+                    if !self.config.no_visualization {
+                        println!("New path found with {} steps", self.agent.get_current_path().unwrap().len());
+                    }
+                } else {
+                    // No path found - agent is stuck
+                    stuck_attempts += 1;
+                    
+                    if stuck_attempts <= MAX_STUCK_ATTEMPTS {
+                        stats.total_moves += 1; // Count waiting as a move
+                        
+                        if !self.config.no_visualization {
+                            println!("No path found - waiting... (attempt {}/{})", stuck_attempts, MAX_STUCK_ATTEMPTS);
+                        }
+                    } else {
+                        if !self.config.no_visualization {
+                            println!("FAILURE: Agent permanently stuck after {} attempts", MAX_STUCK_ATTEMPTS);
+                        }
+                        break;
+                    }
+                }
+            }
+            
+            // Follow current path (only if we have a valid path and aren't stuck)
+            if stuck_attempts == 0 {
+                if let Some(next_pos) = self.agent.get_next_step() {
                     self.agent.move_to(next_pos);
                     stats.total_moves += 1;
                     
-                    // Only print and sleep if visualization is enabled
                     if !self.config.no_visualization {
                         self.clear_screen();
                         println!("=== PATHFINDING SIMULATION ===");
                         println!("Algorithm: {} | Step: {} | Moves: {} | Active obstacle groups: {}", 
                                  self.config.algorithm, total_iterations + 1, stats.total_moves, self.active_obstacle_groups.len());
-                        println!("Agent position: ({}, {})", self.agent.position.x, self.agent.position.y);
+                        
+                        let (path_progress, path_total) = self.agent.get_path_progress();
+                        println!("Agent position: ({}, {}) | Path progress: {}/{}", 
+                                 self.agent.position.x, self.agent.position.y, path_progress, path_total);
                         println!("Goal position: ({}, {})", self.grid.goal.x, self.grid.goal.y);
                         println!("Original optimal path (A*): {}", self.optimal_path_length);
                         println!("Obstacle cycle: {} | Cycles until next: {}", 
                                  self.current_obstacle_cycle,
                                  self.environment.obstacle_cycle_interval - self.cycles_since_last_obstacle);
                         
-                        // Show timing info if enabled
-                        println!("Last observe: {:.2?} | Last find_path: {:.2?}", 
-                                 observe_duration, find_path_duration);
+                        // Show timing info
+                        if !timing_data.observe_times.is_empty() {
+                            println!("Last observe: {:.2?} | Recalculations: {}", 
+                                     timing_data.observe_times.last().unwrap(),
+                                     timing_data.find_path_times.len());
+                        }
+                        
+                        if timing_data.find_path_times.len() > 0 {
+                            println!("Last find_path: {:.2?} | Avg find_path: {:.2?}", 
+                                     timing_data.find_path_times.last().unwrap(),
+                                     timing_data.average_find_path_time());
+                        }
                         
                         // Show obstacle group info
                         for (i, group) in self.active_obstacle_groups.iter().enumerate() {
@@ -546,52 +354,29 @@ impl Simulation {
                                      i + 1, group.positions.len(), group.cycles_remaining);
                         }
                         
-                        // Show current path if available
-                        if path.len() > 2 {
-                            println!("Next few moves: {:?}", &path[1..path.len().min(4)]);
+                        // Show next few moves in current path
+                        if let Some(path) = self.agent.get_current_path() {
+                            let (current_idx, _) = self.agent.get_path_progress();
+                            if current_idx + 1 < path.len() {
+                                let next_moves: Vec<_> = path.iter()
+                                    .skip(current_idx + 1)
+                                    .take(3)
+                                    .collect();
+                                println!("Next moves: {:?}", next_moves);
+                            }
                         }
                         
                         self.grid.print_grid(Some(self.agent.position));
                         thread::sleep(Duration::from_millis(self.config.delay_ms));
                     }
                 } else {
-                    // Agent reached goal
-                    break;
-                }
-            } else {
-                // No path found - agent is stuck
-                stuck_attempts += 1;
-                
-                if stuck_attempts <= MAX_STUCK_ATTEMPTS {
-                    // Wait and try again next turn
-                    stats.total_moves += 1; // Count waiting as a move
-                    
-                    if !self.config.no_visualization {
-                        self.clear_screen();
-                        println!("=== PATHFINDING SIMULATION ===");
-                        println!("Agent stuck at position {:?} - waiting... (attempt {}/{})", 
-                                 self.agent.position, stuck_attempts, MAX_STUCK_ATTEMPTS);
-                        println!("Algorithm: {} | Step: {} | Moves: {} | Active obstacle groups: {}", 
-                                 self.config.algorithm, total_iterations + 1, stats.total_moves, self.active_obstacle_groups.len());
-                        println!("Last observe: {:.2?} | Last find_path: {:.2?}", 
-                                 observe_duration, find_path_duration);
-                        self.grid.print_grid(Some(self.agent.position));
-                        thread::sleep(Duration::from_millis(self.config.delay_ms));
-                    } else {
-                        // println!("Agent stuck at position {:?} - waiting... (attempt {}/{})", 
-                        //          self.agent.position, stuck_attempts, MAX_STUCK_ATTEMPTS);
-                    }
-                } else {
-                    // Truly stuck after max attempts
-                    if !self.config.no_visualization {
-                        self.clear_screen();
-                        println!("=== PATHFINDING SIMULATION ===");
-                        println!("FAILURE: Agent permanently stuck at position {:?} after {} attempts", 
-                                 self.agent.position, MAX_STUCK_ATTEMPTS);
-                        self.grid.print_grid(Some(self.agent.position));
-                    } else {
-                        println!("Agent permanently stuck at position {:?} after {} attempts", 
-                                 self.agent.position, MAX_STUCK_ATTEMPTS);
+                    // Reached end of path - should be at goal
+                    if !self.agent.is_at_goal(self.grid.goal) {
+                        if !self.config.no_visualization {
+                            println!("Warning: Reached end of path but not at goal!");
+                        }
+                        // Force recalculation
+                        self.agent.clear_path();
                     }
                     break;
                 }
@@ -599,18 +384,21 @@ impl Simulation {
             
             total_iterations += 1;
             if total_iterations >= max_iterations {
-                panic!("Reached max iterations, exiting");
+                if !self.config.no_visualization {
+                    println!("Reached max iterations, stopping simulation");
+                }
+                break;
             }
         }
 
         // Clean up any remaining obstacles
         self.clear_all_obstacles();
 
-        // Final state - only print detailed info if visualization is enabled
+        // Final state
         if !self.config.no_visualization {
             self.clear_screen();
             println!("=== SIMULATION COMPLETE ===");
-            if self.agent.position == self.grid.goal {
+            if self.agent.is_at_goal(self.grid.goal) {
                 println!("SUCCESS: Agent reached the goal!");
             } else {
                 println!("FAILED: Agent did not reach the goal");
@@ -619,6 +407,7 @@ impl Simulation {
             println!("Final position: ({}, {})", self.agent.position.x, self.agent.position.y);
             println!("Total steps: {} | Total moves: {}", total_iterations, stats.total_moves);
             println!("Original optimal path (A*): {}", self.optimal_path_length);
+            println!("Path recalculations: {}", timing_data.find_path_times.len());
             
             // Show timing summary
             println!("Average observe time: {:.2?}", timing_data.average_observe_time());
@@ -632,23 +421,47 @@ impl Simulation {
         }
 
         stats.calculate_efficiency();
+        (stats, self.get_algorithm_stats(), timing_data)
+    }
+
+    /// Get algorithm statistics based on algorithm type
+    fn get_algorithm_stats(&self) -> AlgorithmStats {
+        let path_calculations = self.get_path_calculation_count();
         
-        // Create appropriate algorithm stats based on algorithm type
-        let algorithm_stats = match self.config.algorithm.as_str() {
-            "a_star" => AlgorithmStats::AStar(algorithm_calls),
-            "d_star_lite" => AlgorithmStats::DStarLite(algorithm_calls),
+        match self.config.algorithm.as_str() {
+            "a_star" => AlgorithmStats::AStar(path_calculations),
+            "d_star_lite" => AlgorithmStats::DStarLite(path_calculations),
             "hybrid" => {
                 let (a_star_calls, d_star_calls) = self.algorithm.get_usage_stats();
                 AlgorithmStats::Hybrid { a_star_calls, d_star_calls }
             },
-            _ => AlgorithmStats::AStar(algorithm_calls), // fallback
-        };
+            _ => AlgorithmStats::AStar(path_calculations),
+        }
+    }
 
-        (stats, algorithm_stats, timing_data)
+    /// Get total number of path calculations performed
+    fn get_path_calculation_count(&self) -> usize {
+        // This should be tracked by timing_data.find_path_times.len()
+        // but for hybrid algorithms, we need to use their internal counters
+        match self.config.algorithm.as_str() {
+            "hybrid" => {
+                let (a_star_calls, d_star_calls) = self.algorithm.get_usage_stats();
+                a_star_calls + d_star_calls
+            },
+            _ => {
+                // For non-hybrid algorithms, count is the number of find_path calls
+                // This will be properly tracked by timing_data, but we need to access it
+                // For now, return 0 and let the caller use timing_data.find_path_times.len()
+                0
+            }
+        }
     }
 
     /// Update obstacles using the pre-generated timeline
-    fn update_obstacles_from_timeline(&mut self) {
+    /// Returns true if obstacles changed
+    fn update_obstacles_from_timeline(&mut self) -> bool {
+        let mut obstacles_changed = false;
+        
         // Increment cycle counter
         self.cycles_since_last_obstacle += 1;
 
@@ -662,6 +475,7 @@ impl Simulation {
                     self.grid.cells[pos.x][pos.y] = Cell::Empty;
                 }
                 expired_groups.push(i);
+                obstacles_changed = true;
             }
         }
 
@@ -673,15 +487,18 @@ impl Simulation {
         // Place new obstacles if it's time and we have more in the timeline
         if self.cycles_since_last_obstacle >= self.environment.obstacle_cycle_interval {
             if self.current_obstacle_cycle < self.environment.obstacle_timeline.len() {
-                self.place_obstacle_group_from_timeline();
+                obstacles_changed = self.place_obstacle_group_from_timeline() || obstacles_changed;
                 self.current_obstacle_cycle += 1;
             }
             self.cycles_since_last_obstacle = 0;
         }
+
+        obstacles_changed
     }
 
     /// Place obstacles from the pre-generated timeline
-    fn place_obstacle_group_from_timeline(&mut self) {
+    /// Returns true if obstacles were placed
+    fn place_obstacle_group_from_timeline(&mut self) -> bool {
         let obstacle_positions = &self.environment.obstacle_timeline[self.current_obstacle_cycle];
         
         let mut new_group = ObstacleGroup {
@@ -700,6 +517,9 @@ impl Simulation {
 
         if !new_group.positions.is_empty() {
             self.active_obstacle_groups.push(new_group);
+            true
+        } else {
+            false
         }
     }
 
@@ -742,7 +562,260 @@ impl Simulation {
             0
         }
     }
+
+    /// Run all algorithms and compare results
+    pub fn run_all_algorithms(config: Config) -> Result<Vec<AlgorithmResult>, String> {
+        // Generate a random seed for this run, but use it consistently across all algorithms
+        let run_seed = rand::random::<u64>();
+        let environment = EnvironmentSetup::generate(&config, Some(run_seed));
+        
+        // Define available algorithms
+        let algorithms = [
+            AlgorithmRunner::new("a_star", |_start, _goal| Box::new(AStar::new())),
+            AlgorithmRunner::new("d_star_lite", |start, goal| Box::new(DStarLite::new(start, goal))),
+            AlgorithmRunner::new("hybrid", |start, goal| Box::new(HybridAStarDStar::new(start, goal))),
+        ];
+
+        let mut results = Vec::new();
+
+        // Create grid for all algorithms to use
+        let grid = environment.create_grid();
+
+        // Calculate optimal path using A* (no obstacles, only walls)
+        let optimal_path_length = Self::calculate_optimal_path_with_astar(&grid);
+        
+        if optimal_path_length == 0 {
+            return Err(format!("No valid path exists from start {:?} to goal {:?}! Grid has {} walls.", 
+                              grid.start, grid.goal, 
+                              grid.cells.iter().flatten().filter(|&cell| *cell == Cell::Wall).count()));
+        }
+
+        for algorithm_runner in algorithms.iter() {
+            // Create a new config for this algorithm run (no visualization)
+            let mut algorithm_config = config.clone();
+            algorithm_config.no_visualization = true;
+            algorithm_config.algorithm = algorithm_runner.name.clone();
+
+            // Create simulation with the shared environment
+            match Self::new_with_environment_and_algorithm(
+                algorithm_config,
+                environment.clone(),
+                (algorithm_runner.create_algorithm)(environment.start, environment.goal),
+                optimal_path_length,
+                &grid
+            ) {
+                Ok(mut simulation) => {
+                    // Run the simulation
+                    let (statistics, algorithm_stats, timing_data) = simulation.run();
+                    let success = simulation.agent.is_at_goal(simulation.grid.goal);
+                    let final_position = simulation.agent.position;
+
+                    results.push(AlgorithmResult {
+                        name: algorithm_runner.name.clone(),
+                        statistics,
+                        algorithm_stats,
+                        timing_data,
+                        success,
+                        final_position,
+                    });
+                }
+                Err(e) => {
+                    // Handle simulation creation failure
+                    if !config.quiet {
+                        println!("Failed to create simulation for {}: {}", algorithm_runner.name, e);
+                    }
+                    
+                    let failed_result = AlgorithmResult {
+                        name: algorithm_runner.name.clone(),
+                        statistics: Statistics::new(config.num_walls, config.num_obstacles, 0),
+                        algorithm_stats: AlgorithmStats::AStar(0),
+                        timing_data: TimingData::new(),
+                        success: false,
+                        final_position: grid.start,
+                    };
+                    results.push(failed_result);
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Create simulation with specific environment and algorithm
+    pub fn new_with_environment_and_algorithm(
+        config: Config, 
+        environment: EnvironmentSetup, 
+        algorithm: Box<dyn PathfindingAlgorithm>,
+        optimal_path_length: usize,
+        grid: &Grid
+    ) -> Result<Self, String> {
+        let agent = Agent::new(grid.start);
+        let sim_grid = grid.clone();
+
+        Ok(Simulation {
+            grid: sim_grid,
+            agent,
+            algorithm,
+            config,
+            optimal_path_length,
+            environment,
+            active_obstacle_groups: Vec::new(),
+            cycles_since_last_obstacle: 0,
+            current_obstacle_cycle: 0,
+        })
+    }
+
+    /// Print comparison results in a nice table format
+    pub fn print_comparison_results(results: &[AlgorithmResult]) {
+        println!("\n=== ALGORITHM COMPARISON RESULTS ===");
+        println!();
+        
+        // Print header
+        println!("{:<15} {:<8} {:<8} {:<8} {:<12} {:<15} {:<15} {:<15} {:<15} {:<20}", 
+                 "Algorithm", "Success", "Moves", "Optimal", "Efficiency", "Avg Observe", "Avg Find Path", "Path Recalcs", "Final Position", "Algorithm Usage");
+        println!("{}", "-".repeat(140));
+
+        // Print results for each algorithm
+        for result in results {
+            let success_str = if result.success { "✓" } else { "✗" };
+            let efficiency_str = format!("{:.3}", result.statistics.route_efficiency);
+            let final_pos_str = format!("({},{})", result.final_position.x, result.final_position.y);
+            
+            let usage_str = match &result.algorithm_stats {
+                AlgorithmStats::AStar(_) => format!("{} calls", result.timing_data.total_calls()),
+                AlgorithmStats::DStarLite(_) => format!("{} calls", result.timing_data.total_calls()),
+                AlgorithmStats::Hybrid { a_star_calls, d_star_calls } => {
+                    format!("A*:{} D*:{}", a_star_calls, d_star_calls)
+                }
+            };
+            
+            let avg_observe_str = format!("{:.2?}", result.timing_data.average_observe_time());
+            let avg_find_path_str = format!("{:.2?}", result.timing_data.average_find_path_time());
+            let path_recalcs_str = format!("{}", result.timing_data.total_calls());
+            
+            println!("{:<15} {:<8} {:<8} {:<8} {:<12} {:<15} {:<15} {:<15} {:<15} {:<20}", 
+                     result.name,
+                     success_str,
+                     result.statistics.total_moves,
+                     result.statistics.optimal_path_length,
+                     efficiency_str,
+                     avg_observe_str,
+                     avg_find_path_str,
+                     path_recalcs_str,
+                     final_pos_str,
+                     usage_str);
+        }
+
+        // Print detailed analysis
+        println!();
+        println!("=== PERFORMANCE ANALYSIS ===");
+        
+        let successful_algorithms: Vec<_> = results.iter().filter(|r| r.success).collect();
+        
+        if !successful_algorithms.is_empty() {
+            // Find best performing algorithm by different metrics
+            let best_moves = successful_algorithms.iter()
+                .min_by_key(|r| r.statistics.total_moves)
+                .unwrap();
+            
+            let best_efficiency = successful_algorithms.iter()
+                .min_by(|a, b| a.statistics.route_efficiency.partial_cmp(&b.statistics.route_efficiency).unwrap())
+                .unwrap();
+
+            let fewest_recalcs = successful_algorithms.iter()
+                .min_by_key(|r| r.timing_data.total_calls())
+                .unwrap();
+
+            let fastest_avg_recalc = successful_algorithms.iter()
+                .min_by_key(|r| r.timing_data.average_find_path_time())
+                .unwrap();
+
+            println!("Best by total moves: {} ({} moves)", best_moves.name, best_moves.statistics.total_moves);
+            println!("Best by efficiency: {} ({:.3} efficiency)", best_efficiency.name, best_efficiency.statistics.route_efficiency);
+            println!("Fewest path recalculations: {} ({} recalcs)", fewest_recalcs.name, fewest_recalcs.timing_data.total_calls());
+            println!("Fastest avg recalculation: {} ({:.2?} avg)", fastest_avg_recalc.name, fastest_avg_recalc.timing_data.average_find_path_time());
+            
+            // Show path recalculation comparison
+            println!();
+            println!("=== PATH RECALCULATION ANALYSIS ===");
+            for result in successful_algorithms {
+                let total_moves = result.statistics.total_moves;
+                let recalcs = result.timing_data.total_calls();
+                let recalc_ratio = if total_moves > 0 { 
+                    recalcs as f64 / total_moves as f64 
+                } else { 
+                    0.0 
+                };
+                
+                println!("{}: {} recalcs over {} moves ({:.3} recalcs/move)", 
+                         result.name, recalcs, total_moves, recalc_ratio);
+            }
+            
+            // Hybrid algorithm breakdown
+            println!();
+            println!("=== HYBRID ALGORITHM BREAKDOWN ===");
+            for result in results {
+                if let AlgorithmStats::Hybrid { a_star_calls, d_star_calls } = &result.algorithm_stats {
+                    let total_calls = a_star_calls + d_star_calls;
+                    if total_calls > 0 {
+                        let a_star_pct = (*a_star_calls as f64 / total_calls as f64) * 100.0;
+                        let d_star_pct = (*d_star_calls as f64 / total_calls as f64) * 100.0;
+                        println!("{}: {} total calls", result.name, total_calls);
+                        println!("  • A* usage: {} calls ({:.1}%)", a_star_calls, a_star_pct);
+                        println!("  • D* Lite usage: {} calls ({:.1}%)", d_star_calls, d_star_pct);
+                        
+                        // Performance analysis
+                        if *a_star_calls == 1 && *d_star_calls > 0 {
+                            println!("  ✓ Optimal hybrid performance: A* used once for initial path, D* Lite handled updates");
+                        } else if *a_star_calls > 1 {
+                            println!("  ⚠ Multiple A* calls: {} - indicates significant environment changes", a_star_calls);
+                        } else if *d_star_calls == 0 {
+                            println!("  ⚠ Only A* used - no incremental updates occurred");
+                        }
+                    }
+                }
+            }
+        } else {
+            println!("No algorithms successfully reached the goal.");
+        }
+    }
+     fn print_simulation_state(&self, iteration: usize, stats: &Statistics, observe_duration: &Duration, find_path_duration: &Duration) {
+        self.clear_screen();
+        println!("=== PATHFINDING SIMULATION ===");
+        println!("Algorithm: {} | Step: {} | Moves: {} | Active obstacles: {}", 
+                 self.config.algorithm, iteration, stats.total_moves, self.active_obstacle_groups.len());
+        println!("Agent: ({}, {}) | Goal: ({}, {})", 
+                 self.agent.position.x, self.agent.position.y, self.grid.goal.x, self.grid.goal.y);
+        println!("Optimal path: {} | Current path length: {}", 
+                 self.optimal_path_length, 
+                 self.agent.current_path.as_ref().map(|p| p.len()).unwrap_or(0));
+        
+        if find_path_duration.as_nanos() > 0 {
+            println!("Last recalculation: observe {:.2?} | find_path {:.2?}", observe_duration, find_path_duration);
+        }
+        
+        self.grid.print_grid(Some(self.agent.position));
+        thread::sleep(Duration::from_millis(self.config.delay_ms));
+    }
+    
+    fn print_final_state(&self, stats: &Statistics, timing_data: &TimingData) {
+        self.clear_screen();
+        println!("=== SIMULATION COMPLETE ===");
+        if self.agent.is_at_goal(self.grid.goal) {
+            println!("SUCCESS: Agent reached the goal!");
+        } else {
+            println!("FAILED: Agent did not reach the goal");
+        }
+        println!("Algorithm: {}", self.config.algorithm);
+        println!("Final position: ({}, {})", self.agent.position.x, self.agent.position.y);
+        println!("Total moves: {} | Path recalculations: {}", stats.total_moves, timing_data.total_calls());
+        println!("Optimal path: {}", self.optimal_path_length);
+        println!("Average recalculation time: {:.2?}", timing_data.average_find_path_time());
+        
+        self.grid.print_grid(Some(self.agent.position));
+    }
 }
+
 
 #[derive(Debug, Clone)]
 pub struct TimingData {
@@ -777,7 +850,9 @@ impl TimingData {
     }
     
     pub fn total_calls(&self) -> usize {
-        // Should be the same for both, but use find_path as it's the main operation
         self.find_path_times.len()
     }
 }
+
+   
+

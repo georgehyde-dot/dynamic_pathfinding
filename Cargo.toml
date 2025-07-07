@@ -7,3 +7,4 @@ edition = "2021"
 pathfinding = "4.0.0"
 rand = "0.8.5"
 clap = { version = "4.0.29", features = ["derive"] }
+rustc-hash = "2.1.1"

@@ -129,6 +129,7 @@ dependencies = [
  "clap",
  "pathfinding",
  "rand",
+ "rustc-hash",
 ]
 
 [[package]]
