@@ -47,4 +47,8 @@ pub struct Config {
 
     #[arg(long, default_value = "simulation_results.csv")]
     pub output_file: String,
+
+    /// Suppress most output for faster processing
+    #[arg(long, default_value_t = false)]
+    pub quiet: bool,
 }

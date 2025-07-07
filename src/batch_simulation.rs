@@ -41,23 +41,34 @@ impl BatchSimulation {
     }
 
     pub fn run(&mut self) -> Result<(), String> {
-        println!("=== BATCH SIMULATION STARTED ===");
-        println!("Grid size: {}", self.config.grid_size);
-        println!("Walls range: {} to {}", self.config.min_walls, self.config.max_walls);
-        println!("Obstacles range: {} to {}", self.config.min_obstacles, self.config.max_obstacles);
-        println!("Simulations per configuration: {}", self.config.num_simulations);
-        println!("Timeout: {} seconds", self.config.timeout_seconds);
-        println!("Algorithm: {}", self.config.algorithm);
-        println!("Output file: {}", self.config.output_file);
-        println!();
+        if !self.config.quiet {
+            println!("=== BATCH SIMULATION STARTED ===");
+            println!("Grid size: {}", self.config.grid_size);
+            println!("Walls range: {} to {}", self.config.min_walls, self.config.max_walls);
+            println!("Obstacles range: {} to {}", self.config.min_obstacles, self.config.max_obstacles);
+            println!("Simulations per configuration: {}", self.config.num_simulations);
+            println!("Timeout: {} seconds", self.config.timeout_seconds);
+            println!("Algorithm: {}", self.config.algorithm);
+            println!("Output file: {}", self.config.output_file);
+            println!();
+        }
 
         let total_configurations = self.count_total_configurations();
-        println!("Total configurations to test: {}", total_configurations);
-        println!("Total simulations to run: {}", total_configurations * self.config.num_simulations);
-        println!();
+        let total_simulations = total_configurations * self.config.num_simulations;
+        
+        if !self.config.quiet {
+            println!("Total configurations to test: {}", total_configurations);
+            println!("Total simulations to run: {}", total_simulations);
+            println!();
+        }
 
         let mut configuration_count = 0;
+        let mut completed_simulations = 0;
         let timeout_duration = Duration::from_secs(self.config.timeout_seconds);
+
+        // Progress reporting variables
+        let mut last_progress_report = Instant::now();
+        let progress_interval = Duration::from_secs(10); // Report every 10 seconds
 
         // Iterate through all combinations of walls and obstacles
         for num_walls in self.config.min_walls..=self.config.max_walls {
@@ -66,15 +77,39 @@ impl BatchSimulation {
                 
                 // Check timeout
                 if self.start_time.elapsed() > timeout_duration {
-                    println!("⏰ Timeout reached after {} configurations", configuration_count - 1);
+                    if !self.config.quiet {
+                        println!("⏰ Timeout reached after {} configurations", configuration_count - 1);
+                    }
                     break;
                 }
 
-                println!("Configuration {}/{}: {} walls, {} obstacles", 
-                         configuration_count, total_configurations, num_walls, num_obstacles);
+                if !self.config.quiet {
+                    println!("Configuration {}/{}: {} walls, {} obstacles", 
+                             configuration_count, total_configurations, num_walls, num_obstacles);
+                }
 
                 // Run simulations for this configuration
-                self.run_configuration(num_walls, num_obstacles)?;
+                let sims_completed = self.run_configuration(num_walls, num_obstacles)?;
+                completed_simulations += sims_completed;
+
+
+
+                // Progress reporting - show progress every 10 seconds regardless of quiet mode
+                if last_progress_report.elapsed() > progress_interval {
+                    let progress_percentage = (completed_simulations as f64 / total_simulations as f64) * 100.0;
+                    let elapsed = self.start_time.elapsed();
+                    let estimated_total = if completed_simulations > 0 {
+                        elapsed.mul_f64(total_simulations as f64 / completed_simulations as f64)
+                    } else {
+                        Duration::from_secs(0)
+                    };
+                    let remaining = estimated_total.saturating_sub(elapsed);
+                    
+                    println!("Progress: {:.1}% ({}/{}) - Elapsed: {:.1}s - ETA: {:.1}s", 
+                             progress_percentage, completed_simulations, total_simulations,
+                             elapsed.as_secs_f64(), remaining.as_secs_f64());
+                    last_progress_report = Instant::now();
+                }
             }
             
             // Check timeout again at outer loop level
@@ -86,10 +121,15 @@ impl BatchSimulation {
         // Export results to CSV
         self.export_to_csv()?;
 
-        println!("\n=== BATCH SIMULATION COMPLETED ===");
-        println!("Total results collected: {}", self.results.len());
-        println!("Results saved to: {}", self.config.output_file);
-        println!("Total time: {:.2?}", self.start_time.elapsed());
+        if !self.config.quiet {
+            println!("\n=== BATCH SIMULATION COMPLETED ===");
+            println!("Total results collected: {}", self.results.len());
+            println!("Results saved to: {}", self.config.output_file);
+            println!("Total time: {:.2?}", self.start_time.elapsed());
+        } else {
+            println!("Batch simulation completed: {} results in {:.1}s -> {}", 
+                     self.results.len(), self.start_time.elapsed().as_secs_f64(), self.config.output_file);
+        }
 
         Ok(())
     }
@@ -100,77 +140,156 @@ impl BatchSimulation {
         wall_count * obstacle_count
     }
 
-    fn run_configuration(&mut self, num_walls: usize, num_obstacles: usize) -> Result<(), String> {
+    fn run_configuration(&mut self, num_walls: usize, num_obstacles: usize) -> Result<usize, String> {
         // Create a configuration for this specific run
         let mut run_config = self.config.clone();
         run_config.num_walls = num_walls;
         run_config.num_obstacles = num_obstacles;
         run_config.no_visualization = true; // Always disable visualization in batch mode
+        run_config.quiet = true; // Force quiet mode for individual simulations
+
+        let mut completed_count = 0;
 
         for sim_id in 0..self.config.num_simulations {
             // Check timeout before each simulation
             let timeout_duration = Duration::from_secs(self.config.timeout_seconds);
             if self.start_time.elapsed() > timeout_duration {
-                println!("  ⏰ Timeout reached during simulation {}", sim_id);
-                return Ok(());
+                if !self.config.quiet {
+                    println!("  ⏰ Timeout reached during simulation {}", sim_id);
+                }
+                return Ok(completed_count);
             }
 
-            print!("  Simulation {}/{}: ", sim_id + 1, self.config.num_simulations);
+            if !self.config.quiet {
+                print!("  Simulation {}/{}: ", sim_id + 1, self.config.num_simulations);
+            }
             
             let simulation_start = Instant::now();
             
             if self.config.algorithm == "all" {
                 // Run all algorithms for this configuration
-                let results = Simulation::run_all_algorithms(run_config.clone());
-                
-                for algorithm_result in results {
-                    let batch_result = self.convert_algorithm_result_to_batch_result(
-                        algorithm_result,
-                        sim_id,
-                        num_walls,
-                        num_obstacles,
-                        simulation_start.elapsed()
-                    );
-                    self.results.push(batch_result);
+                match Simulation::run_all_algorithms(run_config.clone()) {
+                    Ok(results) => {
+                        for algorithm_result in results {
+                            let batch_result = self.convert_algorithm_result_to_batch_result(
+                                algorithm_result,
+                                sim_id,
+                                num_walls,
+                                num_obstacles,
+                                simulation_start.elapsed()
+                            );
+                            self.results.push(batch_result);
+                        }
+                        
+                        if !self.config.quiet {
+                            print!("✓ ");
+                        }
+                    }
+                    Err(e) => {
+                        // Handle run_all_algorithms failure
+                        if !self.config.quiet {
+                            print!("✗ ({})", e);
+                        }
+                        
+                        // Create failed results for all algorithms
+                        let algorithms = ["a_star", "d_star_lite", "hybrid"];
+                        for algorithm in &algorithms {
+                            let failed_result = BatchResult {
+                                simulation_id: sim_id,
+                                algorithm: algorithm.to_string(),
+                                grid_size: self.config.grid_size,
+                                num_walls,
+                                num_obstacles,
+                                success: false,
+                                total_moves: 0,
+                                optimal_path_length: 0,
+                                route_efficiency: 0.0,
+                                execution_time_ms: simulation_start.elapsed().as_millis() as u64,
+                                a_star_calls: 0,
+                                d_star_calls: 0,
+                                average_observe_time_ns: 0,
+                                average_find_path_time_ns: 0,
+                                total_pathfinding_calls: 0,
+                            };
+                            self.results.push(failed_result);
+                        }
+                    }
                 }
             } else {
-                // Run single algorithm - make sure the algorithm is set correctly
-                let mut simulation = Simulation::new(run_config.clone());
-                let (stats, algorithm_stats, timing_data) = simulation.run();
-                
-                let batch_result = BatchResult {
-                    simulation_id: sim_id,
-                    algorithm: self.config.algorithm.clone(), // This should be the correct algorithm
-                    grid_size: self.config.grid_size,
-                    num_walls,
-                    num_obstacles,
-                    success: simulation.agent.position == simulation.grid.goal,
-                    total_moves: stats.total_moves,
-                    optimal_path_length: stats.optimal_path_length,
-                    route_efficiency: stats.route_efficiency,
-                    execution_time_ms: simulation_start.elapsed().as_millis() as u64,
-                    a_star_calls: match algorithm_stats {
-                        AlgorithmStats::AStar(calls) => calls,
-                        AlgorithmStats::Hybrid { a_star_calls, .. } => a_star_calls,
-                        _ => 0,
-                    },
-                    d_star_calls: match algorithm_stats {
-                        AlgorithmStats::DStarLite(calls) => calls,
-                        AlgorithmStats::Hybrid { d_star_calls, .. } => d_star_calls,
-                        _ => 0,
-                    },
-                    average_observe_time_ns: timing_data.average_observe_time().as_nanos() as u64,
-                    average_find_path_time_ns: timing_data.average_find_path_time().as_nanos() as u64,
-                    total_pathfinding_calls: timing_data.total_calls(),
-                };
-                
-                self.results.push(batch_result);
+                // Run single algorithm with error handling
+                match Simulation::new(run_config.clone()) {
+                    Ok(mut simulation) => {
+                        let (stats, algorithm_stats, timing_data) = simulation.run();
+                        
+                        let batch_result = BatchResult {
+                            simulation_id: sim_id,
+                            algorithm: self.config.algorithm.clone(),
+                            grid_size: self.config.grid_size,
+                            num_walls,
+                            num_obstacles,
+                            success: simulation.agent.position == simulation.grid.goal,
+                            total_moves: stats.total_moves,
+                            optimal_path_length: stats.optimal_path_length,
+                            route_efficiency: stats.route_efficiency,
+                            execution_time_ms: simulation_start.elapsed().as_millis() as u64,
+                            a_star_calls: match algorithm_stats {
+                                AlgorithmStats::AStar(calls) => calls,
+                                AlgorithmStats::Hybrid { a_star_calls, .. } => a_star_calls,
+                                _ => 0,
+                            },
+                            d_star_calls: match algorithm_stats {
+                                AlgorithmStats::DStarLite(calls) => calls,
+                                AlgorithmStats::Hybrid { d_star_calls, .. } => d_star_calls,
+                                _ => 0,
+                            },
+                            average_observe_time_ns: timing_data.average_observe_time().as_nanos() as u64,
+                            average_find_path_time_ns: timing_data.average_find_path_time().as_nanos() as u64,
+                            total_pathfinding_calls: timing_data.total_calls(),
+                        };
+                        
+                        self.results.push(batch_result);
+                        
+                        if !self.config.quiet {
+                            print!("✓ ");
+                        }
+                    }
+                    Err(e) => {
+                        // Handle simulation creation failure - create a failed result
+                        if !self.config.quiet {
+                            print!("✗ ({})", e);
+                        }
+                        
+                        let failed_result = BatchResult {
+                            simulation_id: sim_id,
+                            algorithm: self.config.algorithm.clone(),
+                            grid_size: self.config.grid_size,
+                            num_walls,
+                            num_obstacles,
+                            success: false,
+                            total_moves: 0,
+                            optimal_path_length: 0,
+                            route_efficiency: 0.0,
+                            execution_time_ms: simulation_start.elapsed().as_millis() as u64,
+                            a_star_calls: 0,
+                            d_star_calls: 0,
+                            average_observe_time_ns: 0,
+                            average_find_path_time_ns: 0,
+                            total_pathfinding_calls: 0,
+                        };
+                        
+                        self.results.push(failed_result);
+                    }
+                }
             }
             
-            print!("✓ ");
+            completed_count += 1;
         }
-        println!("Done");
-        Ok(())
+        
+        if !self.config.quiet {
+            println!("Done");
+        }
+        
+        Ok(completed_count)
     }
 
     fn convert_algorithm_result_to_batch_result(

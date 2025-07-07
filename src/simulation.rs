@@ -93,8 +93,8 @@ impl EnvironmentSetup {
             obstacle_timeline.push(obstacle_group);
         }
 
-        println!("Generated environment - Start: {:?}, Goal: {:?}, Walls: {}, Obstacle cycles: {}", 
-                 start, goal, walls.len(), obstacle_timeline.len());
+        // println!("Generated environment - Start: {:?}, Goal: {:?}, Walls: {}, Obstacle cycles: {}", 
+        //          start, goal, walls.len(), obstacle_timeline.len());
 
         EnvironmentSetup {
             grid_size: config.grid_size,
@@ -165,11 +165,11 @@ pub struct Simulation {
 }
 
 impl Simulation {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config) -> Result<Self, String> {
         Self::new_with_environment(config, None)
     }
 
-    pub fn new_with_environment(config: Config, environment: Option<EnvironmentSetup>) -> Self {
+    pub fn new_with_environment(config: Config, environment: Option<EnvironmentSetup>) -> Result<Self, String> {
         let environment = environment.unwrap_or_else(|| EnvironmentSetup::generate(&config, None));
         let grid = environment.create_grid();
         let agent = Agent::new(grid.start);
@@ -181,20 +181,19 @@ impl Simulation {
             "a_star" => Box::new(AStar::new()),
             "d_star_lite" => Box::new(DStarLite::new(grid.start, grid.goal)),
             "hybrid" => Box::new(HybridAStarDStar::new(grid.start, grid.goal)),
-            _ => {
-                println!("Unknown algorithm '{}', defaulting to a_star", config.algorithm);
-                Box::new(AStar::new())
-            }
+            _ => return Err(format!("Unknown algorithm: '{}'", config.algorithm)),
         };
 
         // Calculate optimal path using A* (no obstacles, only walls)
         let optimal_path_length = Self::calculate_optimal_path_with_astar(&grid);
         
         if optimal_path_length == 0 {
-            panic!("No valid path exists from start to goal! Try reducing num_walls.");
+            return Err(format!("No valid path exists from start {:?} to goal {:?}! Grid has {} walls.", 
+                              grid.start, grid.goal, 
+                              grid.cells.iter().flatten().filter(|&cell| *cell == Cell::Wall).count()));
         }
 
-        Simulation {
+        Ok(Simulation {
             grid,
             agent,
             algorithm,
@@ -204,11 +203,11 @@ impl Simulation {
             active_obstacle_groups: Vec::new(),
             cycles_since_last_obstacle: 0,
             current_obstacle_cycle: 0,
-        }
+        })
     }
 
     /// Run all algorithms and compare results
-    pub fn run_all_algorithms(config: Config) -> Vec<AlgorithmResult> {
+    pub fn run_all_algorithms(config: Config) -> Result<Vec<AlgorithmResult>, String> {
         // Generate a random seed for this run, but use it consistently across all algorithms
         let run_seed = rand::random::<u64>();
         let environment = EnvironmentSetup::generate(&config, Some(run_seed));
@@ -222,13 +221,13 @@ impl Simulation {
 
         let mut results = Vec::new();
 
-        println!("Running comparison of {} algorithms...", algorithms.len());
-        println!("Environment seed: {} (for reproducibility)", run_seed);
-        println!("Environment: Grid {}x{}, Walls: {}, Obstacles: {}", 
-                 environment.grid_size, environment.grid_size, 
-                 environment.walls.len(), config.num_obstacles);
-        println!("Start: {:?}, Goal: {:?}", environment.start, environment.goal);
-        println!();
+        // println!("Running comparison of {} algorithms...", algorithms.len());
+        // println!("Environment seed: {} (for reproducibility)", run_seed);
+        // println!("Environment: Grid {}x{}, Walls: {}, Obstacles: {}", 
+        //          environment.grid_size, environment.grid_size, 
+        //          environment.walls.len(), config.num_obstacles);
+        // println!("Start: {:?}, Goal: {:?}", environment.start, environment.goal);
+        // println!();
 
         // create grid for both algorithms to use
 
@@ -238,11 +237,13 @@ impl Simulation {
         let optimal_path_length = Self::calculate_optimal_path_with_astar(&grid);
         
         if optimal_path_length == 0 {
-            panic!("No valid path exists from start to goal! Try reducing num_walls.");
+            return Err(format!("No valid path exists from start {:?} to goal {:?}! Grid has {} walls.", 
+                              grid.start, grid.goal, 
+                              grid.cells.iter().flatten().filter(|&cell| *cell == Cell::Wall).count()));
         }
 
         for (i, algorithm_runner) in algorithms.iter().enumerate() {
-            println!("Running algorithm {} of {}: {}", i + 1, algorithms.len(), algorithm_runner.name);
+            // println!("Running algorithm {} of {}: {}", i + 1, algorithms.len(), algorithm_runner.name);
             
             // Create a new config for this algorithm run (no visualization)
             let mut algorithm_config = config.clone();
@@ -250,34 +251,51 @@ impl Simulation {
             algorithm_config.algorithm = algorithm_runner.name.clone();
 
             // Create simulation with the shared environment
-            let mut simulation = Simulation::new_with_environment_and_algorithm(
+            match Self::new_with_environment_and_algorithm(
                 algorithm_config,
                 environment.clone(),
                 (algorithm_runner.create_algorithm)(environment.start, environment.goal),
                 optimal_path_length,
                 &grid
-            );
+            ) {
+                Ok(mut simulation) => {
+                    // Run the simulation
+                    let (statistics, algorithm_stats, timing_data) = simulation.run();
+                    let success = simulation.agent.position == simulation.grid.goal;
+                    let final_position = simulation.agent.position;
 
+                    results.push(AlgorithmResult {
+                        name: algorithm_runner.name.clone(),
+                        statistics,
+                        algorithm_stats,
+                        timing_data,
+                        success,
+                        final_position,
+                    });
 
-            // Run the simulation
-            let (statistics, algorithm_stats, timing_data) = simulation.run();
-            let success = simulation.agent.position == simulation.grid.goal;
-            let final_position = simulation.agent.position;
-
-            results.push(AlgorithmResult {
-                name: algorithm_runner.name.clone(),
-                statistics,
-                algorithm_stats,
-                timing_data,
-                success,
-                final_position,
-            });
-
-            println!("Completed: {} - Success: {}, Moves: {}", 
-                     algorithm_runner.name, success, results.last().unwrap().statistics.total_moves);
+                    // println!("Completed: {} - Success: {}, Moves: {}", 
+                    //          algorithm_runner.name, success, results.last().unwrap().statistics.total_moves);
+                }
+                Err(e) => {
+                    // Handle simulation creation failure
+                    if !config.quiet {
+                        println!("Failed to create simulation for {}: {}", algorithm_runner.name, e);
+                    }
+                    
+                    let failed_result = AlgorithmResult {
+                        name: algorithm_runner.name.clone(),
+                        statistics: Statistics::new(config.num_walls, config.num_obstacles, 0),
+                        algorithm_stats: AlgorithmStats::AStar(0),
+                        timing_data: TimingData::new(),
+                        success: false,
+                        final_position: grid.start,
+                    };
+                    results.push(failed_result);
+                }
+            }
         }
 
-        results
+        Ok(results)
     }
 
     /// Create simulation with specific environment and algorithm
@@ -287,13 +305,13 @@ impl Simulation {
         algorithm: Box<dyn PathfindingAlgorithm>,
         optimal_path_length: usize,
         grid: &Grid
-    ) -> Self {
+    ) -> Result<Self, String> {
 
         let agent = Agent::new(grid.start);
 
         let sim_grid = grid.clone();
 
-        Simulation {
+        Ok(Simulation {
             grid: sim_grid,
             agent,
             algorithm,
@@ -303,7 +321,7 @@ impl Simulation {
             active_obstacle_groups: Vec::new(),
             cycles_since_last_obstacle: 0,
             current_obstacle_cycle: 0,
-        }
+        })
     }
 
     /// Print comparison results in a nice table format
@@ -560,8 +578,8 @@ impl Simulation {
                         self.grid.print_grid(Some(self.agent.position));
                         thread::sleep(Duration::from_millis(self.config.delay_ms));
                     } else {
-                        println!("Agent stuck at position {:?} - waiting... (attempt {}/{})", 
-                                 self.agent.position, stuck_attempts, MAX_STUCK_ATTEMPTS);
+                        // println!("Agent stuck at position {:?} - waiting... (attempt {}/{})", 
+                        //          self.agent.position, stuck_attempts, MAX_STUCK_ATTEMPTS);
                     }
                 } else {
                     // Truly stuck after max attempts
