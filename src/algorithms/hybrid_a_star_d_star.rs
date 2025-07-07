@@ -1,13 +1,13 @@
 use crate::algorithms::common::PathfindingAlgorithm;
 use crate::algorithms::a_star::AStar;
-use crate::algorithms::d_star_lite_simple::DStarLiteSimple;
+use crate::algorithms::d_star_lite::DStarLite;
 use crate::grid::{Grid, Position};
 use std::collections::HashSet;
 
 /// Hybrid algorithm that uses A* for initial path finding and D* Lite Simple for updates
 pub struct HybridAStarDStar {
     a_star: AStar,
-    d_star_lite_simple: DStarLiteSimple,
+    d_star_lite: DStarLite,
     initial_path_found: bool,
     last_start: Position,
     last_goal: Position,
@@ -21,7 +21,7 @@ impl HybridAStarDStar {
     pub fn new(start: Position, goal: Position) -> Self {
         HybridAStarDStar {
             a_star: AStar::new(),
-            d_star_lite_simple: DStarLiteSimple::new(),
+            d_star_lite: DStarLite::new(start, goal),
             initial_path_found: false,
             last_start: start,
             last_goal: goal,
@@ -124,7 +124,7 @@ impl PathfindingAlgorithm for HybridAStarDStar {
             self.d_star_usage_count += 1;
             
             // Use D* Lite Simple for incremental updates
-            let result = self.d_star_lite_simple.find_path(grid, start, goal, obstacles);
+            let result = self.d_star_lite.find_path(grid, start, goal, obstacles);
             
             // Update tracking variables
             self.last_start = start;

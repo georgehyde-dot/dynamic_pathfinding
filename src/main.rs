@@ -89,7 +89,7 @@ fn main() {
             }
             
             // Debug information for D* Lite algorithms
-            if (config.algorithm == "d_star_lite" || config.algorithm == "d_star_lite_simple") && stats.total_moves == 0 {
+            if (config.algorithm == "d_star_lite" ) && stats.total_moves == 0 {
                 println!("\nDEBUG: {} returned 0 moves - this indicates the algorithm failed to find a path", config.algorithm);
                 println!("This could be due to:");
                 println!("1. Algorithm initialization issues");
