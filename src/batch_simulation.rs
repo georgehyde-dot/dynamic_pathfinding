@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::simulation::{Simulation, AlgorithmResult};
 use crate::statistics::{ AlgorithmStats};
-use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::Write;
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
@@ -29,6 +29,8 @@ pub struct BatchSimulation {
     config: Config,
     results: Vec<BatchResult>,
     start_time: Instant,
+    batch_size: usize,           // Add this
+    total_results_written: usize, // Add this
 }
 
 impl BatchSimulation {
@@ -37,10 +39,15 @@ impl BatchSimulation {
             config,
             results: Vec::new(),
             start_time: Instant::now(),
+            batch_size: 100,             // Add this
+            total_results_written: 0,    // Add this
         }
     }
 
     pub fn run(&mut self) -> Result<(), String> {
+        if self.initialize_csv_file().is_ok() {
+            println!("Initialized CSV");
+        }
         if !self.config.quiet {
             println!("=== BATCH SIMULATION STARTED ===");
             println!("Grid size: {}", self.config.grid_size);
@@ -92,7 +99,9 @@ impl BatchSimulation {
                 let sims_completed = self.run_configuration(num_walls, num_obstacles)?;
                 completed_simulations += sims_completed;
 
-
+                if self.results.len() >= self.batch_size {
+                    self.flush_results_to_csv()?;
+                }
 
                 // Progress reporting - show progress every 10 seconds regardless of quiet mode
                 if last_progress_report.elapsed() > progress_interval {
@@ -105,9 +114,10 @@ impl BatchSimulation {
                     };
                     let remaining = estimated_total.saturating_sub(elapsed);
                     
-                    println!("Progress: {:.1}% ({}/{}) - Elapsed: {:.1}s - ETA: {:.1}s", 
+                    println!("Progress: {:.1}% ({}/{}) - Elapsed: {:.1}s - ETA: {:.1}s - Batches written: {}", 
                              progress_percentage, completed_simulations, total_simulations,
-                             elapsed.as_secs_f64(), remaining.as_secs_f64());
+                             elapsed.as_secs_f64(), remaining.as_secs_f64(), 
+                             self.total_results_written / self.batch_size);
                     last_progress_report = Instant::now();
                 }
             }
@@ -118,8 +128,9 @@ impl BatchSimulation {
             }
         }
 
-        // Export results to CSV
-        self.export_to_csv()?;
+        if !self.results.is_empty() {
+            self.flush_results_to_csv()?;
+        }
 
         if !self.config.quiet {
             println!("\n=== BATCH SIMULATION COMPLETED ===");
@@ -154,16 +165,9 @@ impl BatchSimulation {
             // Check timeout before each simulation
             let timeout_duration = Duration::from_secs(self.config.timeout_seconds);
             if self.start_time.elapsed() > timeout_duration {
-                if !self.config.quiet {
-                    println!("  ⏰ Timeout reached during simulation {}", sim_id);
-                }
                 return Ok(completed_count);
             }
 
-            if !self.config.quiet {
-                print!("  Simulation {}/{}: ", sim_id + 1, self.config.num_simulations);
-            }
-            
             let simulation_start = Instant::now();
             
             if self.config.algorithm == "all" {
@@ -180,19 +184,9 @@ impl BatchSimulation {
                             );
                             self.results.push(batch_result);
                         }
-                        
-                        if !self.config.quiet {
-                            print!("✓ ");
-                        }
                     }
-                    Err(e) => {
-                        // Handle run_all_algorithms failure
-                        if !self.config.quiet {
-                            print!("✗ ({})", e);
-                        }
-                        
-                        // Create failed results for all algorithms
-                        let algorithms = ["a_star", "d_star_lite", "hybrid"];
+                    Err(_e) => {
+                        let algorithms = ["a_star", "d_star_lite"];
                         for algorithm in &algorithms {
                             let failed_result = BatchResult {
                                 simulation_id: sim_id,
@@ -248,17 +242,8 @@ impl BatchSimulation {
                         };
                         
                         self.results.push(batch_result);
-                        
-                        if !self.config.quiet {
-                            print!("✓ ");
-                        }
                     }
-                    Err(e) => {
-                        // Handle simulation creation failure - create a failed result
-                        if !self.config.quiet {
-                            print!("✗ ({})", e);
-                        }
-                        
+                    Err(_e) => {
                         let failed_result = BatchResult {
                             simulation_id: sim_id,
                             algorithm: self.config.algorithm.clone(),
@@ -284,11 +269,9 @@ impl BatchSimulation {
             
             completed_count += 1;
         }
-        
-        if !self.config.quiet {
-            println!("Done");
+        if self.results.len() >= self.batch_size {
+            self.flush_results_to_csv()?;
         }
-        
         Ok(completed_count)
     }
 
@@ -327,35 +310,49 @@ impl BatchSimulation {
         }
     }
 
-    fn export_to_csv(&self) -> Result<(), String> {
-        let mut file = File::create(&self.config.output_file)
-            .map_err(|e| format!("Failed to create output file: {}", e))?;
+    pub fn with_batch_size(mut self, batch_size: usize) -> Self {
+        self.batch_size = batch_size;
+        self
+    }
 
-        // Write CSV header
-        writeln!(file, "simulation_id,algorithm,grid_size,num_walls,num_obstacles,success,total_moves,optimal_path_length,route_efficiency,execution_time_ms,a_star_calls,d_star_calls,average_observe_time_ns,average_find_path_time_ns,total_pathfinding_calls")
-            .map_err(|e| format!("Failed to write header: {}", e))?;
+    fn flush_results_to_csv(&mut self) -> Result<(), String> {
+        if self.results.is_empty() {
+            return Ok(());
+        }
 
-        // Write data rows
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.config.output_file)
+            .map_err(|e| format!("Failed to open output file for appending: {}", e))?;
+
         for result in &self.results {
             writeln!(file, "{},{},{},{},{},{},{},{},{:.6},{},{},{},{},{},{}",
-                result.simulation_id,
-                result.algorithm,
-                result.grid_size,
-                result.num_walls,
-                result.num_obstacles,
-                result.success,
-                result.total_moves,
-                result.optimal_path_length,
-                result.route_efficiency,
-                result.execution_time_ms,
-                result.a_star_calls,
-                result.d_star_calls,
-                result.average_observe_time_ns,
-                result.average_find_path_time_ns,
-                result.total_pathfinding_calls
+                result.simulation_id, result.algorithm, result.grid_size, result.num_walls, result.num_obstacles,
+                result.success, result.total_moves, result.optimal_path_length, result.route_efficiency,
+                result.execution_time_ms, result.a_star_calls, result.d_star_calls, result.average_observe_time_ns,
+                result.average_find_path_time_ns, result.total_pathfinding_calls
             ).map_err(|e| format!("Failed to write data row: {}", e))?;
         }
 
+        self.total_results_written += self.results.len();
+        if !self.config.quiet {
+            println!("Flushed {} results to CSV (total: {})", self.results.len(), self.total_results_written);
+        }
+        self.results.clear();
+        Ok(())
+    }
+
+    fn initialize_csv_file(&self) -> Result<(), String> {
+        let mut file = std::fs::File::create(&self.config.output_file)
+            .map_err(|e| format!("Failed to create output file: {}", e))?;
+
+        writeln!(file, "simulation_id,algorithm,grid_size,num_walls,num_obstacles,success,total_moves,optimal_path_length,route_efficiency,execution_time_ms,a_star_calls,d_star_calls,average_observe_time_ns,average_find_path_time_ns,total_pathfinding_calls")
+            .map_err(|e| format!("Failed to write header: {}", e))?;
+
+        if !self.config.quiet {
+            println!("Initialized CSV file: {}", self.config.output_file);
+        }
         Ok(())
     }
 
