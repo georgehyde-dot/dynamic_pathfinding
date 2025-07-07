@@ -1,6 +1,6 @@
 use crate::config::Config;
-use crate::simulation::{Simulation, EnvironmentSetup, AlgorithmResult};
-use crate::statistics::{Statistics, AlgorithmStats};
+use crate::simulation::{Simulation, AlgorithmResult};
+use crate::statistics::{ AlgorithmStats};
 use std::fs::File;
 use std::io::Write;
 use std::time::{Duration, Instant};
@@ -371,7 +371,7 @@ impl BatchSimulation {
         let mut algorithm_groups: HashMap<String, Vec<&BatchResult>> = HashMap::new();
         for result in &self.results {
             algorithm_groups.entry(result.algorithm.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(result);
         }
 

@@ -342,7 +342,7 @@ impl Simulation {
                                      timing_data.find_path_times.len());
                         }
                         
-                        if timing_data.find_path_times.len() > 0 {
+                        if !timing_data.find_path_times.is_empty() {
                             println!("Last find_path: {:.2?} | Avg find_path: {:.2?}", 
                                      timing_data.find_path_times.last().unwrap(),
                                      timing_data.average_find_path_time());
@@ -779,79 +779,41 @@ impl Simulation {
             println!("No algorithms successfully reached the goal.");
         }
     }
-     fn print_simulation_state(&self, iteration: usize, stats: &Statistics, observe_duration: &Duration, find_path_duration: &Duration) {
-        self.clear_screen();
-        println!("=== PATHFINDING SIMULATION ===");
-        println!("Algorithm: {} | Step: {} | Moves: {} | Active obstacles: {}", 
-                 self.config.algorithm, iteration, stats.total_moves, self.active_obstacle_groups.len());
-        println!("Agent: ({}, {}) | Goal: ({}, {})", 
-                 self.agent.position.x, self.agent.position.y, self.grid.goal.x, self.grid.goal.y);
-        println!("Optimal path: {} | Current path length: {}", 
-                 self.optimal_path_length, 
-                 self.agent.current_path.as_ref().map(|p| p.len()).unwrap_or(0));
-        
-        if find_path_duration.as_nanos() > 0 {
-            println!("Last recalculation: observe {:.2?} | find_path {:.2?}", observe_duration, find_path_duration);
-        }
-        
-        self.grid.print_grid(Some(self.agent.position));
-        thread::sleep(Duration::from_millis(self.config.delay_ms));
-    }
-    
-    fn print_final_state(&self, stats: &Statistics, timing_data: &TimingData) {
-        self.clear_screen();
-        println!("=== SIMULATION COMPLETE ===");
-        if self.agent.is_at_goal(self.grid.goal) {
-            println!("SUCCESS: Agent reached the goal!");
-        } else {
-            println!("FAILED: Agent did not reach the goal");
-        }
-        println!("Algorithm: {}", self.config.algorithm);
-        println!("Final position: ({}, {})", self.agent.position.x, self.agent.position.y);
-        println!("Total moves: {} | Path recalculations: {}", stats.total_moves, timing_data.total_calls());
-        println!("Optimal path: {}", self.optimal_path_length);
-        println!("Average recalculation time: {:.2?}", timing_data.average_find_path_time());
-        
-        self.grid.print_grid(Some(self.agent.position));
-    }
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TimingData {
     pub observe_times: Vec<Duration>,
     pub find_path_times: Vec<Duration>,
 }
 
-impl TimingData {
-    pub fn new() -> Self {
-        TimingData {
-            observe_times: Vec::new(),
-            find_path_times: Vec::new(),
+    impl TimingData {
+        pub fn new() -> Self {
+            Self::default()
         }
-    }
     
-    pub fn average_observe_time(&self) -> Duration {
-        if self.observe_times.is_empty() {
-            Duration::from_nanos(0)
-        } else {
-            let total: Duration = self.observe_times.iter().sum();
-            total / self.observe_times.len() as u32
+        pub fn average_observe_time(&self) -> Duration {
+            if self.observe_times.is_empty() {
+                Duration::from_nanos(0)
+            } else {
+                let total: Duration = self.observe_times.iter().sum();
+                total / self.observe_times.len() as u32
+            }
         }
-    }
-    
-    pub fn average_find_path_time(&self) -> Duration {
-        if self.find_path_times.is_empty() {
-            Duration::from_nanos(0)
-        } else {
-            let total: Duration = self.find_path_times.iter().sum();
-            total / self.find_path_times.len() as u32
+        
+        pub fn average_find_path_time(&self) -> Duration {
+            if self.find_path_times.is_empty() {
+                Duration::from_nanos(0)
+            } else {
+                let total: Duration = self.find_path_times.iter().sum();
+                total / self.find_path_times.len() as u32
+            }
         }
-    }
-    
-    pub fn total_calls(&self) -> usize {
-        self.find_path_times.len()
-    }
+        
+        pub fn total_calls(&self) -> usize {
+            self.find_path_times.len()
+        }
 }
 
    

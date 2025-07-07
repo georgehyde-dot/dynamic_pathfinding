@@ -87,10 +87,8 @@ impl HybridAStarDStar {
         
         // Check if obstacles changed significantly
         let obstacles_changed = obstacles != &self.last_obstacles;
-        let major_obstacle_change = obstacles_changed && 
-            (obstacles.len() as i32 - self.last_obstacles.len() as i32).abs() > 5;
-        
-        major_obstacle_change
+        obstacles_changed && 
+            (obstacles.len() as i32 - self.last_obstacles.len() as i32).abs() > 5
     }
 }
 
@@ -115,9 +113,9 @@ impl PathfindingAlgorithm for HybridAStarDStar {
                 self.last_obstacles = obstacles.clone();
                 self.initial_path_found = true;
                 
-                return Some(path);
+                Some(path)
             } else {
-                return None;
+                None
             }
         } else {
             // Increment D* Lite Simple usage counter
@@ -131,12 +129,11 @@ impl PathfindingAlgorithm for HybridAStarDStar {
             self.last_obstacles = obstacles.clone();
             
             if let Some(ref _path) = result {
-                return result;
+                result
             } else {
                 // Fallback to A* if D* Lite Simple fails
                 self.a_star_usage_count += 1;
-                let fallback_result = self.a_star.find_path(grid, start, goal, obstacles);
-                return fallback_result;
+                self.a_star.find_path(grid, start, goal, obstacles)
             }
         }
     }

@@ -243,44 +243,6 @@ impl DStarLite {
         }
     }
 
-    /// Handle edge cost changes when robot moves or obstacles change
-    fn handle_edge_changes(&mut self, grid: &Grid, obstacles: &HashSet<Position>) {
-        // Update k_m for robot movement (line 38' from paper)
-        self.k_m = self.k_m.saturating_add(self.h(self.s_last, self.s_start));
-        
-        // Store old edge costs for comparison
-        let old_edge_costs = self.edge_costs.clone();
-        
-        // Update edge costs with new obstacles
-        self.update_edge_costs(grid, obstacles);
-        
-        // Find vertices affected by edge changes
-        let mut affected_vertices = HashSet::new();
-        
-        // Check all positions that might be affected by obstacles
-        for &obs_pos in obstacles {
-            affected_vertices.insert(obs_pos);
-            for neighbor in grid.get_neighbors(&obs_pos) {
-                affected_vertices.insert(neighbor);
-            }
-        }
-        
-        // Also check for any edge cost changes by comparing old vs new costs
-        for ((u, v), &new_cost) in &self.edge_costs {
-            if let Some(&old_cost) = old_edge_costs.get(&(*u, *v)) {
-                if old_cost != new_cost {
-                    affected_vertices.insert(*u);
-                    affected_vertices.insert(*v);
-                }
-            }
-        }
-        
-        // Update all affected vertices
-        for &vertex in &affected_vertices {
-            self.update_vertex(vertex, grid, obstacles);
-        }
-    }
-
     /// Update edge costs when obstacles change
     pub fn update_edge_costs(&mut self, grid: &Grid, obstacles: &HashSet<Position>) {
         self.edge_costs.clear();
@@ -299,32 +261,6 @@ impl DStarLite {
                 }
             }
         }
-    }
-
-    /// Detect if edge costs have changed since last computation
-    fn detect_edge_changes(&self, grid: &Grid, obstacles: &HashSet<Position>) -> bool {
-        // Check if we have no stored edge costs (first run)
-        if self.edge_costs.is_empty() {
-            return true;
-        }
-        
-        // Check if any obstacles affect our stored edge costs
-        for &obs_pos in obstacles {
-            for neighbor in grid.get_neighbors(&obs_pos) {
-                if let Some(&stored_cost) = self.edge_costs.get(&(neighbor, obs_pos)) {
-                    if stored_cost != i32::MAX {
-                        return true; // Edge cost changed from passable to blocked
-                    }
-                }
-                if let Some(&stored_cost) = self.edge_costs.get(&(obs_pos, neighbor)) {
-                    if stored_cost != i32::MAX {
-                        return true; // Edge cost changed from passable to blocked
-                    }
-                }
-            }
-        }
-        
-        false
     }
 }
 

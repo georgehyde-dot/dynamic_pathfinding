@@ -4,6 +4,7 @@ use pathfinding::prelude::astar;
 use std::collections::HashSet;
 
 /// Implements the A* pathfinding algorithm using the `pathfinding` crate.
+#[derive(Default)]
 pub struct AStar;
 
 impl AStar {
