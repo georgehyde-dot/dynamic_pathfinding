@@ -1,3 +1,31 @@
-/target
+# Editor and IDE files
+.zed/
+.ropeproject/
+.vscode/
+.idea/
+
+# Hidden directories (except .git)
+.*
+!.gitignore
+!.github/
+
+# Image files
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.svg
+
+# Rust specific (if not already there)
+target/
+Cargo.lock
+
+# Output files
 *.csv
-*/venv
+*.log
+*.txt
+
+# OS specific
+.DS_Store
+Thumbs.db
