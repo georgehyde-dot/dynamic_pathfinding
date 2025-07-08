@@ -4,6 +4,9 @@
 .vscode/
 .idea/
 
+# Python files
+*/venv/
+
 # Hidden directories (except .git)
 .*
 !.gitignore
