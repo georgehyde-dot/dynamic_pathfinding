@@ -10,7 +10,7 @@ plt.style.use('default')
 sns.set_palette("husl")
 
 # Read the CSV file
-df = pd.read_csv('test4_results.csv')
+df = pd.read_csv('performance_test.csv')
 
 # Filter out hybrid algorithm
 df = df[df['algorithm'] != 'hybrid']
@@ -191,7 +191,7 @@ if len(line_data) == 2:
         print(f"Success Rate - Average difference between {algos[0]} and {algos[1]}: {diff:.2f}%")
 
 plt.tight_layout()
-plt.savefig('algorithm_comparison_analysis5.png', dpi=300, bbox_inches='tight')
+plt.savefig('perf_analysis5.png', dpi=300, bbox_inches='tight')
 plt.show()
 
 # Print bar graph differences (removed from PNG)

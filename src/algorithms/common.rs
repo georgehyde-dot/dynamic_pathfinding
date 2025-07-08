@@ -1,5 +1,6 @@
 use crate::grid::{Grid, Position};
 use std::collections::HashSet;
+use std::any::Any;
 
 pub trait PathfindingAlgorithm {
     fn find_path(
@@ -19,4 +20,6 @@ pub trait PathfindingAlgorithm {
     fn update_environment(&mut self, _grid: &Grid, _obstacles: &HashSet<Position>) {
         // Default: do nothing (most algorithms don't need this)
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }

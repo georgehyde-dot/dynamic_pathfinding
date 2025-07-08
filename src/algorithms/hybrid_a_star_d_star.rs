@@ -141,4 +141,8 @@ impl PathfindingAlgorithm for HybridAStarDStar {
     fn get_usage_stats(&self) -> (usize, usize) {
         (self.a_star_usage_count, self.d_star_usage_count)
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }

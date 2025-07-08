@@ -179,17 +179,19 @@ impl Simulation {
         let grid = environment.create_grid();
         let agent = Agent::new(grid.start);
 
-
-
-
-        let algorithm: Box<dyn PathfindingAlgorithm> = match config.algorithm.as_str() {
+        let mut algorithm: Box<dyn PathfindingAlgorithm> = match config.algorithm.as_str() {
             "a_star" => Box::new(AStar::new()),
             "d_star_lite" => Box::new(DStarLite::new(grid.start, grid.goal)),
-
             "hybrid" => Box::new(HybridAStarDStar::new(grid.start, grid.goal)),
             _ => return Err(format!("Unknown algorithm: '{}'", config.algorithm)),
         };
 
+        // Add this: Initialize grid size for algorithms that need it
+        if config.algorithm.as_str() == "d_star_lite" {
+            if let Some(d_star) = algorithm.as_any_mut().downcast_mut::<DStarLite>() {
+                d_star.ensure_grid_size(grid.size);
+            }
+        }
 
         let optimal_path_length = Self::calculate_optimal_path_with_astar(&grid);
         

@@ -2,6 +2,7 @@ use crate::algorithms::common::PathfindingAlgorithm;
 use crate::grid::{Grid, Position, Cell};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::any::Any;
 
 /// Represents the priority key for a node in the D* Lite priority queue.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -31,10 +32,10 @@ impl Ord for Key {
 
 /// Implements the D* Lite pathfinding algorithm based on the 2002 paper by S. Koenig and M. Likhachev.
 pub struct DStarLite {
-    pub g_scores: HashMap<Position, i32>,      // Make public for hybrid access
-    pub rhs_scores: HashMap<Position, i32>,    // Make public for hybrid access
+    pub g_scores: Vec<i32>,      // Make public for hybrid access
+    pub rhs_scores: Vec<i32>,    // Make public for hybrid access
     queue: BinaryHeap<(Key, Position, u64)>, // Priority queue U with generation counter
-    vertex_generations: HashMap<Position, u64>, // Track current generation for each vertex
+    vertex_generations: Vec<u64>, // Track current generation for each vertex
     current_generation: u64,               // Current generation counter
     k_m: i32,                              // Key modifier
     pub s_start: Position,                     // Make public for hybrid access
@@ -44,16 +45,21 @@ pub struct DStarLite {
     pub initialized: bool,                     // Track if algorithm has been initialized
     pub last_known_obstacles: HashSet<Position>,  // Track what obstacles we've seen
     pub last_start: Position,                     // Track last start position
+    grid_size: usize,  // Add this field at the end
 }
 
 impl DStarLite {
     /// Creates a new instance of the D* Lite algorithm.
     pub fn new(start: Position, goal: Position) -> Self {
+        // Initialize with default grid size - will be updated when first used
+        let default_grid_size = 50; // Will be overridden in first find_path call
+        let total_cells = default_grid_size * default_grid_size;
+        
         DStarLite {
-            g_scores: HashMap::new(),
-            rhs_scores: HashMap::new(),
+            g_scores: vec![i32::MAX; total_cells],
+            rhs_scores: vec![i32::MAX; total_cells],
             queue: BinaryHeap::new(),
-            vertex_generations: HashMap::new(),
+            vertex_generations: vec![0; total_cells],
             current_generation: 0,
             k_m: 0,
             s_start: start,
@@ -61,16 +67,18 @@ impl DStarLite {
             s_last: start,
             edge_costs: HashMap::new(),
             initialized: false,
-            last_known_obstacles: HashSet::new(),  // Initialize properly
-            last_start: start,                     // Initialize properly
+            last_known_obstacles: HashSet::new(),
+            last_start: start,
+            grid_size: default_grid_size,
         }
     }
     
 
     /// procedure CalculateKey(s) - line 01'
     fn calculate_key(&self, s: Position) -> Key {
-        let g_s = *self.g_scores.get(&s).unwrap_or(&i32::MAX);
-        let rhs_s = *self.rhs_scores.get(&s).unwrap_or(&i32::MAX);
+        let index = self.pos_to_index(s);
+        let g_s = self.g_scores[index];
+        let rhs_s = self.rhs_scores[index];
         let min_val = g_s.min(rhs_s);
         
         if min_val == i32::MAX {
@@ -122,19 +130,20 @@ impl DStarLite {
     fn initialize(&mut self) {
         // Clear all data structures
         self.queue.clear();
-        self.vertex_generations.clear();
+        self.vertex_generations.fill(0);
         self.current_generation = 0;
         self.k_m = 0;
-        self.g_scores.clear();
-        self.rhs_scores.clear();
+        self.g_scores.fill(i32::MAX);
+        self.rhs_scores.fill(i32::MAX);
         
         // line 05': rhs(s_goal) = 0
-        self.rhs_scores.insert(self.s_goal, 0);
+        let goal_index = self.pos_to_index(self.s_goal);
+        self.rhs_scores[goal_index] = 0;
         
         // line 06': U.Insert(s_goal, CalculateKey(s_goal))
         let key = self.calculate_key(self.s_goal);
         self.current_generation += 1;
-        self.vertex_generations.insert(self.s_goal, self.current_generation);
+        self.vertex_generations[goal_index] = self.current_generation;
         self.queue.push((key, self.s_goal, self.current_generation));
         
         self.initialized = true;
@@ -142,7 +151,8 @@ impl DStarLite {
 
     /// procedure UpdateVertex(u) - lines 07'-09' with lazy deletion
     fn update_vertex(&mut self, u: Position, grid: &Grid, obstacles: &HashSet<Position>) {
-        let g_u = *self.g_scores.get(&u).unwrap_or(&i32::MAX);
+        let u_index = self.pos_to_index(u);
+        let g_u = self.g_scores[u_index];
         
         // Calculate new rhs(u) if u != s_goal
         if u != self.s_goal {
@@ -151,7 +161,8 @@ impl DStarLite {
             
             for s_prime in successors {
                 let cost = self.c(u, s_prime, grid, obstacles);
-                let g_s_prime = *self.g_scores.get(&s_prime).unwrap_or(&i32::MAX);
+                let s_prime_index = self.pos_to_index(s_prime);
+                let g_s_prime = self.g_scores[s_prime_index];
                 
                 if cost != i32::MAX && g_s_prime != i32::MAX {
                     let total_cost = cost.saturating_add(g_s_prime);
@@ -159,14 +170,14 @@ impl DStarLite {
                 }
             }
             
-            self.rhs_scores.insert(u, min_rhs);
+            self.rhs_scores[u_index] = min_rhs;
         }
         
-        let rhs_u = *self.rhs_scores.get(&u).unwrap_or(&i32::MAX);
+        let rhs_u = self.rhs_scores[u_index];
         
         // Invalidate old entries by incrementing generation
         self.current_generation += 1;
-        self.vertex_generations.insert(u, self.current_generation);
+        self.vertex_generations[u_index] = self.current_generation;
         
         // Insert u if it's inconsistent
         if g_u != rhs_u {
@@ -182,7 +193,8 @@ impl DStarLite {
             let (k_old, u) = loop {
                 if let Some((k, pos, gen)) = self.queue.pop() {
                     // Check if this entry is still valid
-                    if *self.vertex_generations.get(&pos).unwrap_or(&0) == gen {
+                    let pos_index = self.pos_to_index(pos);
+                    if self.vertex_generations[pos_index] == gen {
                         break (k, pos);
                     }
                     // Skip this entry - it's been invalidated
@@ -193,8 +205,9 @@ impl DStarLite {
             
             // Check termination condition
             let start_key = self.calculate_key(self.s_start);
-            let rhs_start = *self.rhs_scores.get(&self.s_start).unwrap_or(&i32::MAX);
-            let g_start = *self.g_scores.get(&self.s_start).unwrap_or(&i32::MAX);
+            let start_index = self.pos_to_index(self.s_start);
+            let rhs_start = self.rhs_scores[start_index];
+            let g_start = self.g_scores[start_index];
 
             let top_less_than_start = self.key_less_than(k_old, start_key);
             let start_inconsistent = rhs_start != g_start;
@@ -202,7 +215,8 @@ impl DStarLite {
             if !top_less_than_start && !start_inconsistent {
                 // Put the item back and break
                 self.current_generation += 1;
-                self.vertex_generations.insert(u, self.current_generation);
+                let u_index = self.pos_to_index(u);
+                self.vertex_generations[u_index] = self.current_generation;
                 self.queue.push((k_old, u, self.current_generation));
                 break;
             }
@@ -211,17 +225,19 @@ impl DStarLite {
             let k_new = self.calculate_key(u);
             if self.key_less_than(k_old, k_new) {
                 self.current_generation += 1;
-                self.vertex_generations.insert(u, self.current_generation);
+                let u_index = self.pos_to_index(u);
+                self.vertex_generations[u_index] = self.current_generation;
                 self.queue.push((k_new, u, self.current_generation));
                 continue;
             }
 
-            let g_u = *self.g_scores.get(&u).unwrap_or(&i32::MAX);
-            let rhs_u = *self.rhs_scores.get(&u).unwrap_or(&i32::MAX);
+            let u_index = self.pos_to_index(u);
+            let g_u = self.g_scores[u_index];
+            let rhs_u = self.rhs_scores[u_index];
 
             if g_u > rhs_u {
                 // Make vertex consistent
-                self.g_scores.insert(u, rhs_u);
+                self.g_scores[u_index] = rhs_u;
                 
                 // Update all predecessors
                 let predecessors = self.pred(u, grid);
@@ -230,7 +246,7 @@ impl DStarLite {
                 }
             } else {
                 // Set g(u) to infinity
-                self.g_scores.insert(u, i32::MAX);
+                self.g_scores[u_index] = i32::MAX;
                 
                 // Update all predecessors and u itself
                 let mut vertices_to_update = self.pred(u, grid);
@@ -272,6 +288,9 @@ impl PathfindingAlgorithm for DStarLite {
         goal: Position,
         obstacles: &HashSet<Position>,
     ) -> Option<Vec<Position>> {
+        // Ensure our vectors are sized correctly for this grid
+        // self.ensure_grid_size(grid.size);
+        
         // Only reinitialize if goal changed
         if !self.initialized || self.s_goal != goal {
             self.s_goal = goal;
@@ -305,7 +324,7 @@ impl PathfindingAlgorithm for DStarLite {
         }
         
         // Check if path exists
-        let g_start = *self.g_scores.get(&self.s_start).unwrap_or(&i32::MAX);
+        let g_start = self.g_scores[self.pos_to_index(self.s_start)];
         if g_start == i32::MAX {
             return None;
         }
@@ -320,46 +339,65 @@ impl PathfindingAlgorithm for DStarLite {
             self.last_known_obstacles = obstacles.clone();
         }
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 
 impl DStarLite {
     /// Reconstruct path from start to goal
     fn reconstruct_path(&self, grid: &Grid, obstacles: &HashSet<Position>) -> Option<Vec<Position>> {
-        let mut path = vec![self.s_start];
+        let mut path = Vec::new();
         let mut current = self.s_start;
-
-        // Follow path from start to goal (line 34' from paper)
+        
+        // Safety check
+        let start_index = self.pos_to_index(self.s_start);
+        if self.g_scores[start_index] == i32::MAX {
+            return None; // No path exists
+        }
+        
+        path.push(current);
+        
         while current != self.s_goal {
-            // Find best successor: s_start = arg min_{s'∈Succ(s_start)} {c(s_start,s') + g(s')}
-            let successors = self.succ(current, grid);
-            let next_step = successors
-                .iter()
-                .filter(|&s_prime| self.c(current, *s_prime, grid, obstacles) != i32::MAX)
-                .min_by_key(|&s_prime| {
-                    let cost = self.c(current, *s_prime, grid, obstacles);
-                    let g_s_prime = *self.g_scores.get(s_prime).unwrap_or(&i32::MAX);
-                    if cost == i32::MAX || g_s_prime == i32::MAX {
-                        i32::MAX
-                    } else {
-                        cost.saturating_add(g_s_prime)
-                    }
-                });
-
-            if let Some(&next) = next_step {
-                path.push(next);
-                current = next;
+            let current_index = self.pos_to_index(current);
+            let current_g = self.g_scores[current_index];
+            
+            if current_g == i32::MAX {
+                return None; // Path broken
+            }
+            
+            let mut best_next = None;
+            let mut best_cost = i32::MAX;
+            
+            for next in self.succ(current, grid) {
+                let cost = self.c(current, next, grid, obstacles);
+                let next_index = self.pos_to_index(next);
+                let next_g = self.g_scores[next_index];
                 
-                // Safety check to prevent infinite loops
-                if path.len() > grid.size * grid.size {
-                    return None;
+                if cost != i32::MAX && next_g != i32::MAX {
+                    let total_cost = cost.saturating_add(next_g);
+                    if total_cost < best_cost {
+                        best_cost = total_cost;
+                        best_next = Some(next);
+                    }
                 }
+            }
+            
+            if let Some(next) = best_next {
+                current = next;
+                path.push(current);
             } else {
-                // No valid next step found
+                return None; // No valid next step
+            }
+            
+            // Safety check for infinite loops
+            if path.len() > grid.size * grid.size {
                 return None;
             }
         }
-
+        
         Some(path)
     }
 }
@@ -400,6 +438,34 @@ impl DStarLite {
         // Only update vertices that were actually affected
         for &vertex in &changed_vertices {
             self.update_vertex(vertex, grid, new_obstacles);
+        }
+    }
+}
+
+impl DStarLite {
+    /// Convert 2D position to 1D vector index
+    #[inline(always)]
+    fn pos_to_index(&self, pos: Position) -> usize {
+        pos.y * self.grid_size + pos.x
+    }
+}
+
+impl DStarLite {
+    /// Ensure vectors are sized correctly for the grid
+    pub fn ensure_grid_size(&mut self, grid_size: usize) {
+        if self.grid_size != grid_size {
+            let total_cells = grid_size * grid_size;
+            self.grid_size = grid_size;
+            
+            // Resize vectors to match grid size
+            self.g_scores.resize(total_cells, i32::MAX);
+            self.rhs_scores.resize(total_cells, i32::MAX);
+            self.vertex_generations.resize(total_cells, 0);
+            
+            // Clear any existing data since grid size changed
+            self.g_scores.fill(i32::MAX);
+            self.rhs_scores.fill(i32::MAX);
+            self.vertex_generations.fill(0);
         }
     }
 }

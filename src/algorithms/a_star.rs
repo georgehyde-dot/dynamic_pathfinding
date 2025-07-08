@@ -57,4 +57,8 @@ impl PathfindingAlgorithm for AStar {
         // The result from `astar` is a tuple `(path, cost)`. We only need the path.
         result.map(|(path, _)| path)
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
