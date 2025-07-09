@@ -49,11 +49,9 @@ pub struct DStarLite {
 }
 
 impl DStarLite {
-    /// Creates a new instance of the D* Lite algorithm.
-    pub fn new(start: Position, goal: Position) -> Self {
-        // Initialize with default grid size - will be updated when first used
-        let default_grid_size = 50; // Will be overridden in first find_path call
-        let total_cells = default_grid_size * default_grid_size;
+    /// Creates a new instance of the D* Lite algorithm with the specified grid size.
+    pub fn new(start: Position, goal: Position, grid_size: usize) -> Self {
+        let total_cells = grid_size * grid_size;
         
         DStarLite {
             g_scores: vec![i32::MAX; total_cells],
@@ -69,7 +67,7 @@ impl DStarLite {
             initialized: false,
             last_known_obstacles: HashSet::new(),
             last_start: start,
-            grid_size: default_grid_size,
+            grid_size, // Use the actual grid size passed in
         }
     }
     

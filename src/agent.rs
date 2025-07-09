@@ -1,4 +1,4 @@
-use crate::grid::{Grid, Position, Cell};
+use crate::grid::{Cell, Grid, Position};
 use std::collections::HashSet;
 
 pub struct Agent {
@@ -70,15 +70,14 @@ impl Agent {
     pub fn is_path_blocked(&self, grid: &Grid) -> bool {
         if let Some(next_pos) = self.get_next_step() {
             // Check if next step is blocked
-            grid.cells[next_pos.x][next_pos.y] == Cell::Obstacle ||
-            grid.cells[next_pos.x][next_pos.y] == Cell::Wall ||
-            self.known_obstacles.contains(&next_pos)
+            grid.cells[next_pos.x][next_pos.y] == Cell::Obstacle
+                || grid.cells[next_pos.x][next_pos.y] == Cell::Wall
         } else {
             false
         }
     }
 
-    /// Check if current path needs recalculation (OPTIMIZED - only check next few steps)
+    /// Check if current path needs recalculation
     pub fn path_needs_recalculation(&self, grid: &Grid) -> bool {
         if let Some(ref path) = self.current_path {
             // Only check next 3-5 steps ahead, not entire path
@@ -86,9 +85,10 @@ impl Agent {
             for i in 1..=check_ahead {
                 if self.path_index + i < path.len() {
                     let pos = path[self.path_index + i];
-                    if grid.cells[pos.x][pos.y] == Cell::Obstacle ||
-                       grid.cells[pos.x][pos.y] == Cell::Wall ||
-                       self.known_obstacles.contains(&pos) {
+                    if grid.cells[pos.x][pos.y] == Cell::Obstacle
+                        || grid.cells[pos.x][pos.y] == Cell::Wall
+                        || self.known_obstacles.contains(&pos)
+                    {
                         return true;
                     }
                 }

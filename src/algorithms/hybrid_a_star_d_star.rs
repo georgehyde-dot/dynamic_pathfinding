@@ -18,10 +18,10 @@ pub struct HybridAStarDStar {
 }
 
 impl HybridAStarDStar {
-    pub fn new(start: Position, goal: Position) -> Self {
+    pub fn new(start: Position, goal: Position, grid_size: usize) -> Self {
         HybridAStarDStar {
             a_star: AStar::new(),
-            d_star_lite: DStarLite::new(start, goal),
+            d_star_lite: DStarLite::new(start, goal, grid_size),
             initial_path_found: false,
             last_start: start,
             last_goal: goal,

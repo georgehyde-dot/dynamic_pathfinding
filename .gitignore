@@ -3,7 +3,7 @@
 .ropeproject/
 .vscode/
 .idea/
-
+.DS_Store
 # Python files
 */venv/
 
